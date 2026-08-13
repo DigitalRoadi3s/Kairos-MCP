@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  caldav-gateway:
+    build: .
+    container_name: caldav-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      CALDAV_SOURCES: |
+        [
+          {
+            "id": "icloud",
+            "name": "iCloud Personal",
+            "url": "https://caldav.icloud.com/",
+            "username": "your-email@icloud.com",
+            "password": "xxxx-xxxx-xxxx-xxxx",
+            "calendar_path": "/caldav/v2/your-email@icloud.com/calendar/personal/",
+            "writable": true
+          }
+        ]
+      LOG_LEVEL: "info"
+      DEFAULT_TIMEZONE: "America/New_York"
+      DNS_SERVERS: "192.168.1.1,8.8.8.8"
+    restart: unless-stopped
+    networks:
+      - homelab
+    # Optional: use Docker secrets for the password instead (see NFR-1)
+    # secrets:
+    #   - icloud_password
+
+networks:
+  homelab:
+    driver: bridge
+
+# secrets:
+#   icloud_password:
+#     file: ./secrets/icloud_password.txt
