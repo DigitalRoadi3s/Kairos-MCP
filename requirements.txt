@@ -1,0 +1,31 @@
+# Core HTTP & CalDAV
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+caldav==1.3.0
+requests==2.31.0
+urllib3==2.0.7
+
+# iCalendar parsing (MUST support timezone handling)
+icalendar==5.0.11
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Validation & data
+pydantic==2.4.2
+pydantic-settings==2.0.3
+
+# Logging (structured JSON)
+structlog==23.2.0
+python-json-logger==2.0.7
+
+# Metrics (Prometheus)
+prometheus-client==0.18.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.1
+
+# Optional: debugging
+python-dotenv==1.0.0
