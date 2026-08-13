@@ -166,6 +166,8 @@ class CalDAVSourceClient:
             raise CalDAVUnavailableError(str(exc)) from exc
         return [self._parse_ical(e.data) for e in raw_events]
 
+
+
     def get_event(self, uid: str) -> Event:
         self._require_connected()
         try:
@@ -173,6 +175,51 @@ class CalDAVSourceClient:
         except NotFoundError as exc:
             raise CalDAVNotFoundError(f"Event '{uid}' not found") from exc
         return self._parse_ical(raw.data)
+
+    def create_event(self, ical_data: str) -> Event:
+        """
+        FR-3 backing call. ical_data comes from ical_writer.generate_ical()
+        (task 10/11). Returns the Event as parsed back from what we just
+        wrote (not from a re-fetch) - fine per the PRD's own accuracy
+        target ("100% fidelity round-trip: create -> read back identical
+        data") since generate_ical + _parse_ical are already verified to
+        round-trip losslessly.
+        """
+        self._require_connected()
+        try:
+            self._calendar.save_event(ical_data)
+        except (Timeout, RequestsConnectionError) as exc:
+            raise CalDAVUnavailableError(str(exc)) from exc
+        return self._parse_ical(ical_data)
+
+    def update_event(self, uid: str, ical_data: str) -> Event:
+        """FR-4 backing call. Caller (task 12) is responsible for the
+        15-minute lock window and recurrence-immutable checks BEFORE
+        calling this - this method just performs the write."""
+        self._require_connected()
+        try:
+            existing = self._calendar.event_by_uid(uid)
+        except NotFoundError as exc:
+            raise CalDAVNotFoundError(f"Event '{uid}' not found") from exc
+        try:
+            existing.data = ical_data
+            existing.save()
+        except (Timeout, RequestsConnectionError) as exc:
+            raise CalDAVUnavailableError(str(exc)) from exc
+        return self._parse_ical(ical_data)
+
+    def delete_event(self, uid: str) -> None:
+        """FR-5 backing call. Caller (task 13) enforces the 15-minute
+        lock window before calling this."""
+        self._require_connected()
+        try:
+            existing = self._calendar.event_by_uid(uid)
+        except NotFoundError as exc:
+            raise CalDAVNotFoundError(f"Event '{uid}' not found") from exc
+        try:
+            existing.delete()
+        except (Timeout, RequestsConnectionError) as exc:
+            raise CalDAVUnavailableError(str(exc)) from exc
 
     def _require_connected(self) -> None:
         if self._calendar is None:
@@ -223,7 +270,13 @@ class CalDAVSourceClient:
                 end_utc = start_utc
 
         attendees = []
-        for a in vevent.get("attendee", []):
+        raw_attendees = vevent.get("attendee", [])
+        # icalendar returns a bare vCalAddress (not a list) when there's
+        # exactly one ATTENDEE line - normalize to a list first, or
+        # iterating a single address iterates its characters instead.
+        if not isinstance(raw_attendees, list):
+            raw_attendees = [raw_attendees]
+        for a in raw_attendees:
             email = str(a).replace("mailto:", "").strip()
             params = getattr(a, "params", {})
             attendees.append(Attendee(
