@@ -20,6 +20,8 @@ from caldav_client import (
     CalDAVSourceClient,
     CalDAVUnavailableError,
 )
+from circuit_breaker import CircuitBreaker
+import metrics
 
 logger = logging.getLogger("caldav_gateway.config")
 
@@ -38,6 +40,36 @@ class SourceConfig:
 
 class ConfigError(Exception):
     """Raised on malformed CALDAV_SOURCES or missing required fields."""
+
+
+CALDAV_METHODS_TO_WRAP = ("list_events", "get_event", "create_event", "update_event", "delete_event")
+
+
+def _wrap_with_breaker(client: CalDAVSourceClient) -> CircuitBreaker:
+    """
+    Wraps the CalDAV-hitting methods on `client` so every call goes
+    through a per-source CircuitBreaker (task 16) and gets timed/counted
+    for Prometheus (task 19) transparently - no call site in main.py/
+    daily_brief.py needs to know either exists.
+    """
+    breaker = CircuitBreaker(client.source_id)
+    for method_name in CALDAV_METHODS_TO_WRAP:
+        original = getattr(client, method_name)
+
+        def make_wrapped(fn, method_name=method_name):
+            def wrapped(*args, **kwargs):
+                with metrics.caldav_request_duration_seconds.labels(
+                        method=method_name, path=client.source_id).time():
+                    try:
+                        return breaker.call(lambda: fn(*args, **kwargs))
+                    except CalDAVUnavailableError:
+                        metrics.caldav_calendar_sync_errors_total.labels(
+                            calendar_id=client.source_id).inc()
+                        raise
+            return wrapped
+
+        setattr(client, method_name, make_wrapped(original))
+    return breaker
 
 
 def _load_source_configs() -> list[SourceConfig]:
@@ -88,17 +120,22 @@ def _load_source_configs() -> list[SourceConfig]:
     return configs
 
 
-def load_and_validate() -> dict[str, CalDAVSourceClient]:
+def load_and_validate() -> tuple[dict[str, CalDAVSourceClient], dict[str, CircuitBreaker]]:
     """
-    Builds a connected CalDAVSourceClient per configured source. Called
-    once at app startup. Per FR-1: "fail gracefully if unreachable" — a
-    single bad source logs an error and is excluded from the returned
-    dict rather than crashing the whole container, so other configured
-    sources still come up. If NO sources connect, raises ConfigError
-    (nothing to serve).
+    Builds a connected CalDAVSourceClient per configured source, each
+    wrapped with a circuit breaker (task 16/17). Called once at app
+    startup. Per FR-1: "fail gracefully if unreachable" — a single bad
+    source logs an error and is excluded from the returned dict rather
+    than crashing the whole container, so other configured sources
+    still come up. If NO sources connect, raises ConfigError (nothing
+    to serve).
+
+    Returns (clients, breakers), both keyed by source_id — main.py
+    holds breakers separately for /health reporting.
     """
     configs = _load_source_configs()
     clients: dict[str, CalDAVSourceClient] = {}
+    breakers: dict[str, CircuitBreaker] = {}
 
     for cfg in configs:
         client = CalDAVSourceClient(
@@ -110,7 +147,9 @@ def load_and_validate() -> dict[str, CalDAVSourceClient]:
         )
         try:
             client.connect()
+            breaker = _wrap_with_breaker(client)
             clients[cfg.id] = client
+            breakers[cfg.id] = breaker
             logger.info("caldav_source_connected", extra={"source_id": cfg.id})
         except CalDAVAuthError:
             logger.error(
@@ -138,4 +177,4 @@ def load_and_validate() -> dict[str, CalDAVSourceClient]:
             "and network reachability - see logs above for per-source errors."
         )
 
-    return clients
+    return clients, breakers
