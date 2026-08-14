@@ -12,7 +12,7 @@ Progress is tracked via commits — each task in the plan lands as its own commi
 |-------|--------|
 | Phase 1: MVP | done — tasks 1, 2, 3, 5, 6, 9 (task 7 covered by task 6, task 8 = this file) |
 | Phase 2: Write support | done — tasks 10, 11, 12, 13, 14, 15 |
-| Phase 3: Polish & Ops | in progress — tasks 16-21, 23 done; task 22 (coverage pass) in progress |
+| Phase 3: Polish & Ops | done — tasks 16-23 |
 | Phase 4: Advanced | backlog |
 
 ## Configuration
