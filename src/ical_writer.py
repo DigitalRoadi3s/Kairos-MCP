@@ -66,7 +66,7 @@ def generate_ical(data: EventInput) -> str:
         raise ValueError("start_time must be before end_time")
 
     cal = ICalendar()
-    cal.add("prodid", "-//CalDAV REST Gateway//EN")
+    cal.add("prodid", "-//Kairos-MCP//EN")
     cal.add("version", "2.0")
 
     event = IEvent()

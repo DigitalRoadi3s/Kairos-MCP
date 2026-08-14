@@ -1,9 +1,9 @@
 version: '3.9'
 
 services:
-  caldav-gateway:
+  kairos-mcp:
     build: .
-    container_name: caldav-gateway
+    container_name: kairos-mcp
     ports:
       - "8080:8080"
     environment:

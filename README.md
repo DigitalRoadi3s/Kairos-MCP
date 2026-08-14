@@ -1,4 +1,4 @@
-# CalDAV REST Gateway
+# Kairos-MCP
 
 Exposes CalDAV calendar systems (iCloud, Google Calendar, Nextcloud) as a REST API. Read events, get a daily brief with free-slot analysis, and create/update/delete events — including recurring ones — all over plain HTTP/JSON instead of raw CalDAV/iCalendar.
 
@@ -148,8 +148,8 @@ uvicorn src.main:app --reload --port 8080
 ## Docker
 
 ```bash
-docker build -t caldav-rest-gateway:latest .
-docker run -p 8080:8080 caldav-rest-gateway:latest
+docker build -t kairos-mcp:latest .
+docker run -p 8080:8080 kairos-mcp:latest
 ```
 
 Or with docker-compose (see `docker-compose.yml` for a full example):

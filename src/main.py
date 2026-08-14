@@ -1,5 +1,5 @@
 """
-CalDAV REST Gateway — FastAPI entrypoint.
+Kairos-MCP — FastAPI entrypoint.
 
 Phase 1 (tasks 1, 2, 3, 5, 6). Task 7 will replace the /metrics stub with
 real prometheus_client output; task 23 will flesh out graceful shutdown.
@@ -30,7 +30,7 @@ LOCK_WINDOW_MINUTES = 15  # FR-4/FR-5: events within this window of start can't 
 logger = logging.getLogger("caldav_gateway.main")
 
 app = FastAPI(
-    title="CalDAV REST Gateway",
+    title="Kairos-MCP",
     version="0.1.0",
     description="Exposes CalDAV calendar systems as a REST API.",
 )
