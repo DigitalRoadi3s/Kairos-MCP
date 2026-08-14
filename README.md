@@ -1,14 +1,36 @@
 # Kairos-MCP
 
-Exposes CalDAV calendar systems (iCloud, Google Calendar, Nextcloud) as a REST API. Read events, get a daily brief with free-slot analysis, and create/update/delete events — including recurring ones — all over plain HTTP/JSON instead of raw CalDAV/iCalendar.
+A CalDAV REST gateway and MCP server for **multi-agent homelab setups** — where more than one model (Claude, Hermes, a local LLM via OpenClaw) needs to read and write the same calendars through a shared, observable backend.
+
+## What this is
+
+Kairos-MCP sits between your LLMs and your CalDAV providers. It exposes iCloud and Nextcloud calendars as a REST API (with circuit-breaker, rate-limit handling, Prometheus metrics, and structured logs), then wraps that API as an MCP server and an OpenAI-compatible tool spec so any agent can call it.
+
+The REST layer is the point. A single running gateway means:
+- Rate limit budget is shared across all consumers (critical — iCloud is aggressive)
+- One circuit breaker protects every model from a flaky provider
+- Credentials live in one place, not in every agent's config
+- You can curl it, script against it, and monitor it independently of whatever agent is calling it
+
+## What this isn't
+
+**The simplest way to get Claude talking to your calendar.** If that's what you want:
+
+- **iCloud + Claude Desktop**: [`mcp-calendars`](https://github.com/lucasheight/mcp-calendars) is a one-command install that handles iCloud, Nextcloud, Google, and more with a setup wizard
+- **Google Calendar + Claude**: Google ships an official MCP server at `https://calendarmcp.googleapis.com/mcp/v1` (Developer Preview) — 9 tools including free-time suggestion and event search, OAuth handled for you
+- **iCloud-only**: [`icloud-calendar-mcp`](https://www.npmjs.com/package/@icloud-calendar-mcp/server) and [`mcp-icloud-calendar`](https://github.com/roygabriel/mcp-icloud-calendar) are both good single-purpose options
+
+Start with one of those. Come back here when you're running multiple models and need them sharing a backend.
 
 ## Features
 
-- Read events in a date range, or a computed daily brief (busy blocks, free slots, attendee summary) for any calendar
-- Create, update, and delete events, including recurring events (RRULE)
-- Multiple calendar sources at once — mix iCloud, Nextcloud, and Google Calendar in one config
-- Circuit breaker + retry/backoff around every CalDAV call, so one flaky provider doesn't take down the others
-- Structured JSON logs, Prometheus metrics, health check per source
+- iCloud and Nextcloud via CalDAV (basic auth / app-specific passwords)
+- Google Calendar via CalDAV (OAuth2 refresh-token — see note below)
+- Circuit breaker + exponential backoff per source
+- 5-minute free-slot cache with write-through invalidation
+- Structured JSON logs, Prometheus metrics (`/metrics`), per-source health (`/health`)
+- MCP server for Claude Desktop, Claude Code, and OpenClaw (see `skill/`)
+- OpenAI-compatible tool spec for Hermes, LiteLLM, Ollama (see `skill/tools.json`)
 
 ## Configuration
 
@@ -31,7 +53,7 @@ export CALDAV_SOURCES='[{"id":"icloud","name":"Personal","url":"https://caldav.i
 
 #### Finding your calendar path
 
-`https://caldav.icloud.com/` is the address of your whole iCloud account. If you have more than one calendar (Personal, Work, Family...), each one has its own separate path underneath that — and it's often a random-looking code, not the calendar's actual name, so you can't guess it. Look it up:
+`https://caldav.icloud.com/` is the address of your whole iCloud account. Each calendar has its own path underneath that — often a random-looking code, not the calendar's display name. Look it up:
 
 ```bash
 pip install caldav
@@ -47,7 +69,7 @@ for cal in client.principal().calendars():
 EOF
 ```
 
-This logs in and prints every calendar you have, with its exact path. Copy the `Path` of the one you want into `calendar_path` above — verbatim, not retyped.
+Copy the `Path` of the calendar you want into `calendar_path` — verbatim.
 
 ### Nextcloud
 
@@ -60,15 +82,21 @@ export CALDAV_SOURCES='[{"id":"nextcloud","name":"Nextcloud Personal","url":"htt
 | Placeholder | Replace with |
 |---|---|
 | `your-nextcloud-domain` | Your Nextcloud server's domain |
-| `your-nextcloud-username` | Your Nextcloud login username (not necessarily your email) |
+| `your-nextcloud-username` | Your Nextcloud login username |
 | `xxxx-xxxx-xxxx-xxxx` | An app password — Nextcloud web UI → your avatar → Settings → Security → "Create new app password" |
-| `.../calendars/your-nextcloud-username/personal/` | The calendar's slug, not its display name — the Calendar app's Settings panel shows "Copy primary CalDAV address" for the base, and each calendar's exact path in its own settings |
+| `.../calendars/your-nextcloud-username/personal/` | The calendar's slug — the Calendar app Settings panel shows each calendar's exact path |
+
+Multiple sources (iCloud and Nextcloud together) go in the same array — each needs a unique `id`.
 
 ### Google Calendar
 
-Google disabled username/password CalDAV access on March 14, 2025 — this requires OAuth 2.0. One-time setup to get a refresh token, then it renews itself automatically:
+> **Before reaching for this path**: if you only need Google Calendar with Claude, Google's [official Calendar MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server) (`calendarmcp.googleapis.com`) is simpler and has more tools (free-time suggestion, event search, RSVP). It's still in Developer Preview, but it handles auth for you.
+>
+> Use the CalDAV path here when you specifically need Google routed through this gateway — so it shares rate-limit budget and circuit-breaker state with your other sources in a multi-agent setup.
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or use an existing one), enable the **Google Calendar API**, and create an **OAuth 2.0 Client ID** of type **Desktop app** — this gives you a `client_id` and `client_secret`.
+Google disabled username/password CalDAV access in March 2025. The CalDAV path requires a refresh token from a one-time OAuth consent flow:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable the **Google Calendar API** and create an **OAuth 2.0 Client ID** (Desktop app type) — gives you a `client_id` and `client_secret`.
 2. Run this once to get a refresh token:
    ```bash
    pip install google-auth-oauthlib
@@ -86,20 +114,11 @@ Google disabled username/password CalDAV access on March 14, 2025 — this requi
    print("refresh_token:", creds.refresh_token)
    EOF
    ```
-   This opens a browser for you to sign in and grant access, then prints a refresh token.
-3. Find your calendar ID: Google Calendar web UI → calendar's settings (⋮ menu) → "Integrate calendar" → **Calendar ID**. For your primary calendar this is just your email address.
+3. Find your calendar ID: Google Calendar web UI → calendar settings → "Integrate calendar" → **Calendar ID** (your email for the primary calendar).
 
 ```bash
 export CALDAV_SOURCES='[{"id":"google","auth_type":"oauth2","url":"https://apidata.googleusercontent.com/caldav/v2/your-calendar-id/events","client_id":"xxx.apps.googleusercontent.com","client_secret":"xxxx","refresh_token":"xxxx","calendar_path":"https://apidata.googleusercontent.com/caldav/v2/your-calendar-id/events"}]'
 ```
-
-| Placeholder | Replace with |
-|---|---|
-| `your-calendar-id` | The Calendar ID from step 3 (your email, for the primary calendar) |
-| `client_id` / `client_secret` | From step 1 |
-| `refresh_token` | From step 2 |
-
-You can mix any combination of iCloud, Nextcloud, and Google sources in the same `CALDAV_SOURCES` array — each just needs a unique `id`.
 
 ## API
 
@@ -109,14 +128,14 @@ You can mix any combination of iCloud, Nextcloud, and Google sources in the same
 | GET | `/api/v1/calendars/{id}/events` | List events in a date range |
 | GET | `/api/v1/calendars/{id}/today` | Daily brief: today's events, free slots, attendee summary |
 | POST | `/api/v1/calendars/{id}/events` | Create an event (supports `recurrence_rule`) |
-| PUT | `/api/v1/calendars/{id}/events/{uid}` | Update an event (locked within 15 min of start; recurrence itself is immutable via PUT) |
+| PUT | `/api/v1/calendars/{id}/events/{uid}` | Update an event (locked within 15 min of start) |
 | DELETE | `/api/v1/calendars/{id}/events/{uid}` | Delete an event (same 15-minute lock) |
 | GET | `/health` | Per-source connection + circuit-breaker status |
 | GET | `/metrics` | Prometheus metrics |
 
 ### Daily brief example
 
-`icloud` below is the `"id"` you picked in `CALDAV_SOURCES` — if you named yours something else, change it here too.
+`icloud` is the `"id"` from your `CALDAV_SOURCES` config.
 
 ```bash
 curl "http://localhost:8080/api/v1/calendars/icloud/today?timezone=America/New_York"
@@ -125,18 +144,22 @@ curl "http://localhost:8080/api/v1/calendars/icloud/today?timezone=America/New_Y
 ```json
 {
   "calendar_id": "icloud",
-  "date": "2026-08-12",
+  "date": "2026-08-14",
   "summary": {
     "total_events": 6,
     "total_calendar_time_minutes": 270,
     "top_attendees": [{"email": "alice@company.com", "name": "Alice", "count": 2}],
     "free_slots": [
-      {"start": "2026-08-12T10:30:00-04:00", "end": "2026-08-12T12:30:00-04:00", "duration_minutes": 120}
+      {"start": "2026-08-14T10:30:00-04:00", "end": "2026-08-14T12:30:00-04:00", "duration_minutes": 120}
     ]
   },
   "events": [ ... ]
 }
 ```
+
+## MCP and tool definitions
+
+See [`skill/`](skill/) — MCP server for Claude Desktop / Claude Code / OpenClaw, plus OpenAI-compatible tool definitions for Hermes, LiteLLM, and Ollama.
 
 ## Running locally
 
@@ -149,13 +172,7 @@ uvicorn src.main:app --reload --port 8080
 
 ```bash
 docker build -t kairos-mcp:latest .
-docker run -p 8080:8080 kairos-mcp:latest
-```
-
-Or with docker-compose (see `docker-compose.yml` for a full example):
-
-```bash
-docker compose up
+docker compose up   # see docker-compose.yml for full example
 ```
 
 ## Tests
@@ -170,6 +187,7 @@ python -m pytest tests/ -v
 ```
 src/     application code
 tests/   test suite
+skill/   MCP server + OpenAI tool definitions
 ```
 
 ## License

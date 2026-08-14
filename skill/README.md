@@ -1,8 +1,16 @@
 # Kairos-MCP Skill
 
-MCP server + OpenAI-compatible tool definitions for the [Kairos-MCP](https://github.com/DigitalRoadi3s/Kairos-MCP).
+MCP server + OpenAI-compatible tool definitions for [Kairos-MCP](https://github.com/DigitalRoadi3s/Kairos-MCP) — a multi-agent CalDAV gateway.
 
-Exposes your iCloud, Nextcloud, or Google calendars as seven tools any LLM can call:
+**Before using this**: if you only need Claude to talk to your calendar, you probably don't need any of this. Check these first:
+- **iCloud + Claude Desktop**: [`mcp-calendars`](https://github.com/lucasheight/mcp-calendars) — one install, no gateway required
+- **Google Calendar + Claude**: [Google's official MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server) at `calendarmcp.googleapis.com` — 9 tools, OAuth handled for you
+
+Use this skill when you're running the Kairos-MCP gateway specifically — because you need multiple models (Claude + Hermes + a local LLM via OpenClaw) sharing the same calendar backend.
+
+---
+
+Exposes seven tools:
 
 | Tool | What it does |
 |---|---|
@@ -10,14 +18,13 @@ Exposes your iCloud, Nextcloud, or Google calendars as seven tools any LLM can c
 | `list_events` | Read events in any date range |
 | `daily_brief` | Today's schedule, free slots, and attendee summary |
 | `create_event` | Create one-off or recurring events |
-| `update_event` | Partial update (PATCH semantics — only provide what you want to change) |
+| `update_event` | Partial update (PATCH semantics) |
 | `delete_event` | Delete an event (locked within 15 min of start) |
 | `gateway_health` | Check connection status and circuit-breaker state |
 
 ## Prerequisites
 
-1. Kairos-MCP must already be running — by default at `http://localhost:8080`.
-2. Python 3.11+
+The Kairos-MCP gateway must already be running — by default at `http://localhost:8080`. Then:
 
 ```bash
 pip install -r skill/requirements.txt
@@ -27,7 +34,7 @@ pip install -r skill/requirements.txt
 
 ## Claude Desktop / Claude Code (MCP)
 
-Add this block to `claude_desktop_config.json`
+Add to `claude_desktop_config.json`
 (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
@@ -35,7 +42,7 @@ Add this block to `claude_desktop_config.json`
   "mcpServers": {
     "caldav": {
       "command": "python3",
-      "args": ["/absolute/path/to/caldav-gateway/skill/mcp_server.py"],
+      "args": ["/absolute/path/to/kairos-mcp/skill/mcp_server.py"],
       "env": {
         "CALDAV_GATEWAY_URL": "http://localhost:8080"
       }
@@ -44,22 +51,41 @@ Add this block to `claude_desktop_config.json`
 }
 ```
 
-Restart Claude Desktop. The seven CalDAV tools appear automatically in every conversation.
+Restart Claude Desktop. If your gateway is on a different host (e.g. a homelab box at `http://192.168.1.50:8080`), update `CALDAV_GATEWAY_URL`.
 
-If your gateway runs on a different host (e.g. a homelab box at `http://192.168.1.50:8080`), update `CALDAV_GATEWAY_URL`.
+If you're using Google Calendar with Claude, you can add Google's official MCP server alongside this one:
+
+```json
+{
+  "mcpServers": {
+    "caldav": {
+      "command": "python3",
+      "args": ["/absolute/path/to/kairos-mcp/skill/mcp_server.py"],
+      "env": { "CALDAV_GATEWAY_URL": "http://localhost:8080" }
+    },
+    "google-calendar": {
+      "serverUrl": "https://calendarmcp.googleapis.com/mcp/v1",
+      "oauth": {
+        "clientId": "YOUR_OAUTH_CLIENT_ID",
+        "clientSecret": "YOUR_OAUTH_CLIENT_SECRET"
+      }
+    }
+  }
+}
+```
 
 ---
 
 ## OpenClaw
 
-OpenClaw proxies stdio MCP servers to local models. Add the same entry to your OpenClaw config under `mcp_servers`:
+OpenClaw proxies stdio MCP servers to local models. Add to your OpenClaw config under `mcp_servers`:
 
 ```json
 {
   "mcp_servers": {
     "caldav": {
       "command": "python3",
-      "args": ["/absolute/path/to/caldav-gateway/skill/mcp_server.py"],
+      "args": ["/absolute/path/to/kairos-mcp/skill/mcp_server.py"],
       "env": {
         "CALDAV_GATEWAY_URL": "http://localhost:8080"
       }
@@ -68,13 +94,11 @@ OpenClaw proxies stdio MCP servers to local models. Add the same entry to your O
 }
 ```
 
-OpenClaw handles the stdio ↔ local model bridging — no other changes needed.
-
 ---
 
 ## Hermes / OpenAI-compatible local LLMs
 
-Use `skill/tools.json` — it follows the OpenAI function-calling format supported by Hermes (NousResearch), LiteLLM, Ollama (with compatible models), and most local inference frameworks.
+Use `skill/tools.json` — OpenAI function-calling format, works with Hermes (NousResearch), LiteLLM, Ollama, and most local inference frameworks.
 
 ### LiteLLM example
 
@@ -87,7 +111,6 @@ tools = json.load(open("skill/tools.json"))
 GATEWAY = "http://localhost:8080"
 
 def dispatch(tool_name: str, args: dict) -> str:
-    """Route a tool call from the LLM to the CalDAV gateway."""
     cid = args.get("calendar_id", "")
     uid = args.get("uid", "")
     routes = {
