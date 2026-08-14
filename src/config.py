@@ -21,6 +21,7 @@ from caldav_client import (
     CalDAVUnavailableError,
 )
 from circuit_breaker import CircuitBreaker
+import google_oauth
 import metrics
 
 logger = logging.getLogger("caldav_gateway.config")
@@ -31,8 +32,12 @@ class SourceConfig:
     id: str
     name: str
     url: str
-    username: str
-    password: str
+    auth_type: str = "basic"  # "basic" | "oauth2" (task 24, Google Calendar)
+    username: Optional[str] = None
+    password: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    refresh_token: Optional[str] = None
     calendar_path: Optional[str] = None
     writable: bool = True
     timezone: str = "UTC"
@@ -101,18 +106,33 @@ def _load_source_configs() -> list[SourceConfig]:
 
     configs = []
     for entry in entries:
-        missing = [k for k in ("id", "url", "username", "password") if k not in entry]
+        auth_type = entry.get("auth_type", "basic")
+        base_required = ["id", "url"]
+        if auth_type == "oauth2":
+            required = base_required + ["client_id", "client_secret", "refresh_token"]
+        elif auth_type == "basic":
+            required = base_required + ["username", "password"]
+        else:
+            raise ConfigError(
+                f"Unknown auth_type '{auth_type}' for source '{entry.get('id', '?')}' "
+                "- must be 'basic' or 'oauth2'."
+            )
+        missing = [k for k in required if k not in entry]
         if missing:
             raise ConfigError(
                 f"Calendar source missing required field(s) {missing}: "
-                f"{ {k: v for k, v in entry.items() if k != 'password'} }"
+                f"{ {k: v for k, v in entry.items() if k not in ('password', 'client_secret', 'refresh_token')} }"
             )
         configs.append(SourceConfig(
             id=entry["id"],
             name=entry.get("name", entry["id"]),
             url=entry["url"],
-            username=entry["username"],
-            password=entry["password"],
+            auth_type=auth_type,
+            username=entry.get("username"),
+            password=entry.get("password"),
+            client_id=entry.get("client_id"),
+            client_secret=entry.get("client_secret"),
+            refresh_token=entry.get("refresh_token"),
             calendar_path=entry.get("calendar_path"),
             writable=entry.get("writable", True),
             timezone=entry.get("timezone", os.environ.get("DEFAULT_TIMEZONE", "UTC")),
@@ -138,12 +158,20 @@ def load_and_validate() -> tuple[dict[str, CalDAVSourceClient], dict[str, Circui
     breakers: dict[str, CircuitBreaker] = {}
 
     for cfg in configs:
+        auth = None
+        if cfg.auth_type == "oauth2":
+            auth = google_oauth.GoogleOAuth2Auth(
+                client_id=cfg.client_id,
+                client_secret=cfg.client_secret,
+                refresh_token=cfg.refresh_token,
+            )
         client = CalDAVSourceClient(
             source_id=cfg.id,
             url=cfg.url,
             username=cfg.username,
             password=cfg.password,
             calendar_path=cfg.calendar_path,
+            auth=auth,
         )
         try:
             client.connect()

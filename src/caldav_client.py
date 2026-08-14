@@ -94,12 +94,20 @@ class CalDAVSourceClient:
     startup validation (task 2) and reused by every request.
     """
 
-    def __init__(self, source_id: str, url: str, username: str, password: str,
-                 calendar_path: Optional[str] = None, timeout: int = 30):
+    def __init__(self, source_id: str, url: str, username: str = None, password: str = None,
+                 calendar_path: Optional[str] = None, timeout: int = 30, auth=None):
+        """
+        auth: an optional requests/niquests-compatible AuthBase instance
+        (e.g. google_oauth.GoogleOAuth2Auth). When provided, it's used
+        INSTEAD of username/password - see connect() below. Kept as a
+        separate param rather than overloading username/password so the
+        two auth modes can't be silently mixed up by a config typo.
+        """
         self.source_id = source_id
         self.url = url
         self.username = username
         self._password = password
+        self._auth = auth
         self.calendar_path = calendar_path
         self.timeout = timeout
         self._client: Optional[caldav.DAVClient] = None
@@ -107,12 +115,19 @@ class CalDAVSourceClient:
 
     def connect(self) -> None:
         try:
-            self._client = caldav.DAVClient(
-                url=self.url,
-                username=self.username,
-                password=self._password,
-                timeout=self.timeout,
-            )
+            if self._auth is not None:
+                self._client = caldav.DAVClient(
+                    url=self.url,
+                    auth=self._auth,
+                    timeout=self.timeout,
+                )
+            else:
+                self._client = caldav.DAVClient(
+                    url=self.url,
+                    username=self.username,
+                    password=self._password,
+                    timeout=self.timeout,
+                )
             principal = self._client.principal()
             if self.calendar_path:
                 self._calendar = self._client.calendar(url=self.calendar_path)
@@ -126,10 +141,14 @@ class CalDAVSourceClient:
             self._calendar.get_properties()
         except AuthorizationError as exc:
             logger.error("caldav_auth_failed", extra={"source_id": self.source_id})
+            if self._auth is not None:
+                hint = ("OAuth2 token was rejected - the refresh token may be "
+                        "invalid, expired, or missing the calendar scope.")
+            else:
+                hint = ("iCloud requires an app-specific password, not the "
+                        "account password.")
             raise CalDAVAuthError(
-                f"Auth failed for source '{self.source_id}'. iCloud requires "
-                "an app-specific password, not the account password — see "
-                "PRD Appendix A Step 1."
+                f"Auth failed for source '{self.source_id}'. {hint}"
             ) from exc
         except NotFoundError as exc:
             raise CalDAVNotFoundError(
@@ -262,6 +281,9 @@ class CalDAVSourceClient:
             last_modified = (lm.astimezone(timezone.utc) if lm.tzinfo
                               else lm.replace(tzinfo=timezone.utc))
 
+        rrule_prop = vevent.get("rrule")
+        recurrence_rule = rrule_prop.to_ical().decode("utf-8") if rrule_prop else None
+
         return Event(
             uid=str(vevent.get("uid")),
             title=str(vevent.get("summary", "")),
@@ -271,7 +293,7 @@ class CalDAVSourceClient:
             all_day=all_day,
             location=str(vevent.get("location", "")) or None,
             attendees=attendees,
-            recurrence_rule=str(vevent.get("rrule", "")) or None,
+            recurrence_rule=recurrence_rule,
             last_modified=last_modified,
             status=str(vevent.get("status", "confirmed")).lower(),
             original_timezone=original_tz,
