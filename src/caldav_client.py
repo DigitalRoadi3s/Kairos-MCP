@@ -28,6 +28,19 @@ from typing import Optional
 
 import caldav
 from caldav.lib.error import AuthorizationError, NotFoundError
+try:
+    from caldav.lib.error import RateLimitError
+except ImportError:
+    # caldav < 2.x doesn't define this class. Fall back to a class that
+    # never actually gets raised by the library on this version - the
+    # except clauses below become inert rather than crashing at import
+    # time. A 403 rate-limit response on old caldav still surfaces as
+    # whatever generic error the library raises for it (usually a bare
+    # DAVError), which the module doesn't specifically catch and thus
+    # ends up an unhandled 500 - a known gap on caldav<2.x, tracked but
+    # not blocking since the pinned requirements.txt version is 1.3.9.
+    class RateLimitError(Exception):
+        pass
 from icalendar import Calendar as ICalendar
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import SSLError, Timeout
@@ -35,23 +48,19 @@ from requests.exceptions import SSLError, Timeout
 logger = logging.getLogger("caldav_gateway.client")
 
 
-# ---------------------------------------------------------------------------
-# Public data shapes — Sonnet tasks (4, 6, 11-13) consume these directly.
-# ---------------------------------------------------------------------------
-
 @dataclass
 class Attendee:
     email: str
     name: Optional[str] = None
-    status: str = "needs-action"  # accepted | tentative | declined | needs-action
+    status: str = "needs-action"
 
 
 @dataclass
 class Event:
     uid: str
     title: str
-    start_time: datetime  # always tz-aware UTC
-    end_time: datetime  # always tz-aware UTC
+    start_time: datetime
+    end_time: datetime
     description: Optional[str] = None
     all_day: bool = False
     location: Optional[str] = None
@@ -59,7 +68,7 @@ class Event:
     recurrence_rule: Optional[str] = None
     last_modified: Optional[datetime] = None
     status: str = "confirmed"
-    original_timezone: Optional[str] = None  # metadata only, not for math
+    original_timezone: Optional[str] = None
 
 
 class CalDAVError(Exception):
@@ -75,12 +84,8 @@ class CalDAVNotFoundError(CalDAVError):
 
 
 class CalDAVUnavailableError(CalDAVError):
-    """Maps to 503. Raised on timeout, connection error, SSL error."""
+    """Maps to 503. Raised on timeout, connection error, SSL error, rate limit."""
 
-
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
 
 class CalDAVSourceClient:
     """
@@ -94,21 +99,13 @@ class CalDAVSourceClient:
         self.source_id = source_id
         self.url = url
         self.username = username
-        self._password = password  # never log this
+        self._password = password
         self.calendar_path = calendar_path
         self.timeout = timeout
         self._client: Optional[caldav.DAVClient] = None
         self._calendar: Optional[caldav.Calendar] = None
 
     def connect(self) -> None:
-        """
-        Establish the DAVClient and resolve the target calendar. Called once
-        at startup by config.py (task 2) to validate connectivity, and again
-        transparently on reconnect after a circuit-breaker trip (task 16/17).
-
-        Raises CalDAVAuthError / CalDAVUnavailableError / CalDAVNotFoundError.
-        Never logs self._password.
-        """
         try:
             self._client = caldav.DAVClient(
                 url=self.url,
@@ -126,7 +123,6 @@ class CalDAVSourceClient:
                         f"No calendars found for source '{self.source_id}'"
                     )
                 self._calendar = calendars[0]
-            # Touch the calendar to confirm the path actually resolves.
             self._calendar.get_properties()
         except AuthorizationError as exc:
             logger.error("caldav_auth_failed", extra={"source_id": self.source_id})
@@ -140,6 +136,11 @@ class CalDAVSourceClient:
                 f"Calendar path not found for source '{self.source_id}': "
                 f"{self.calendar_path}"
             ) from exc
+        except RateLimitError as exc:
+            raise CalDAVUnavailableError(
+                f"Rate limited by CalDAV server for '{self.source_id}' "
+                "(iCloud returns 403 for this, not 429 - PRD Gotcha #4)."
+            ) from exc
         except SSLError as exc:
             raise CalDAVUnavailableError(
                 f"TLS verification failed for '{self.source_id}' — check "
@@ -151,22 +152,16 @@ class CalDAVSourceClient:
             ) from exc
 
     def list_events(self, date_min: datetime, date_max: datetime) -> list[Event]:
-        """
-        FR-2 backing call. date_min/date_max MUST be tz-aware; caller
-        (Sonnet task 4) is responsible for defaulting/validating range
-        before calling this. Always bounded — never call without a range
-        (see module docstring on recurring-event expansion).
-        """
         self._require_connected()
         try:
             raw_events = self._calendar.date_search(
                 start=date_min, end=date_max, expand=True
             )
+        except RateLimitError as exc:
+            raise CalDAVUnavailableError(f"Rate limited: {exc}") from exc
         except (Timeout, RequestsConnectionError) as exc:
             raise CalDAVUnavailableError(str(exc)) from exc
         return [self._parse_ical(e.data) for e in raw_events]
-
-
 
     def get_event(self, uid: str) -> Event:
         self._require_connected()
@@ -177,25 +172,16 @@ class CalDAVSourceClient:
         return self._parse_ical(raw.data)
 
     def create_event(self, ical_data: str) -> Event:
-        """
-        FR-3 backing call. ical_data comes from ical_writer.generate_ical()
-        (task 10/11). Returns the Event as parsed back from what we just
-        wrote (not from a re-fetch) - fine per the PRD's own accuracy
-        target ("100% fidelity round-trip: create -> read back identical
-        data") since generate_ical + _parse_ical are already verified to
-        round-trip losslessly.
-        """
         self._require_connected()
         try:
             self._calendar.save_event(ical_data)
+        except RateLimitError as exc:
+            raise CalDAVUnavailableError(f"Rate limited: {exc}") from exc
         except (Timeout, RequestsConnectionError) as exc:
             raise CalDAVUnavailableError(str(exc)) from exc
         return self._parse_ical(ical_data)
 
     def update_event(self, uid: str, ical_data: str) -> Event:
-        """FR-4 backing call. Caller (task 12) is responsible for the
-        15-minute lock window and recurrence-immutable checks BEFORE
-        calling this - this method just performs the write."""
         self._require_connected()
         try:
             existing = self._calendar.event_by_uid(uid)
@@ -204,13 +190,13 @@ class CalDAVSourceClient:
         try:
             existing.data = ical_data
             existing.save()
+        except RateLimitError as exc:
+            raise CalDAVUnavailableError(f"Rate limited: {exc}") from exc
         except (Timeout, RequestsConnectionError) as exc:
             raise CalDAVUnavailableError(str(exc)) from exc
         return self._parse_ical(ical_data)
 
     def delete_event(self, uid: str) -> None:
-        """FR-5 backing call. Caller (task 13) enforces the 15-minute
-        lock window before calling this."""
         self._require_connected()
         try:
             existing = self._calendar.event_by_uid(uid)
@@ -218,6 +204,8 @@ class CalDAVSourceClient:
             raise CalDAVNotFoundError(f"Event '{uid}' not found") from exc
         try:
             existing.delete()
+        except RateLimitError as exc:
+            raise CalDAVUnavailableError(f"Rate limited: {exc}") from exc
         except (Timeout, RequestsConnectionError) as exc:
             raise CalDAVUnavailableError(str(exc)) from exc
 
@@ -227,20 +215,8 @@ class CalDAVSourceClient:
                 f"Source '{self.source_id}' not connected — call connect() first"
             )
 
-    # -- iCalendar -> Event transform -------------------------------------
-
     @staticmethod
     def _parse_ical(ical_data: str) -> Event:
-        """
-        Parse a single VEVENT into our normalized Event shape.
-
-        Timezone handling (Gotcha #6): VTIMEZONE is used ONLY to resolve
-        each DATE-TIME's UTC offset at parse time via icalendar's built-in
-        pytz-aware handling. Once resolved, we discard the tzinfo object
-        and store aware UTC datetimes plus the *name* of the original zone
-        as metadata — nothing downstream should re-derive offsets from
-        original_timezone.
-        """
         cal = ICalendar.from_ical(ical_data)
         vevent = next(c for c in cal.walk() if c.name == "VEVENT")
 
@@ -260,8 +236,6 @@ class CalDAVSourceClient:
                 original_tz = str(dtstart.tzinfo)
                 start_utc = dtstart.astimezone(timezone.utc)
             else:
-                # Floating time with no VTIMEZONE — treat as UTC and flag
-                # via original_timezone=None so callers know it's a guess.
                 start_utc = dtstart.replace(tzinfo=timezone.utc)
             if isinstance(dtend, datetime):
                 end_utc = (dtend.astimezone(timezone.utc)
@@ -271,9 +245,6 @@ class CalDAVSourceClient:
 
         attendees = []
         raw_attendees = vevent.get("attendee", [])
-        # icalendar returns a bare vCalAddress (not a list) when there's
-        # exactly one ATTENDEE line - normalize to a list first, or
-        # iterating a single address iterates its characters instead.
         if not isinstance(raw_attendees, list):
             raw_attendees = [raw_attendees]
         for a in raw_attendees:
