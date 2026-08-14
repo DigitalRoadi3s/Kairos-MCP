@@ -171,3 +171,7 @@ python -m pytest tests/ -v
 src/     application code
 tests/   test suite
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
