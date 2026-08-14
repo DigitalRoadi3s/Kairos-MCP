@@ -10,3 +10,7 @@ venv/
 *.egg-info/
 dist/
 build/
+# Build/dev artifacts — not part of the public release
+.claude/
+docs/
+phase*.sh
