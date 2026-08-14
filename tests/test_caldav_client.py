@@ -129,6 +129,32 @@ END:VCALENDAR"""
         assert event.uid == "malformed-tz"
         assert event.original_timezone is None
 
+    def test_recurrence_rule_round_trips_exactly(self):
+        """task 25: RRULE must survive generate_ical -> _parse_ical as
+        the exact RFC 5545 string, not a Python repr of the parsed
+        object (a real bug found during development - str(vRecur)
+        produces "vRecur({'FREQ': [...]})" garbage, not "FREQ=...")."""
+        from ical_writer import EventInput, generate_ical
+        from datetime import datetime as dt, timezone as tz
+        ei = EventInput(
+            title="Weekly Standup",
+            start_time=dt(2026, 8, 17, 9, 0, tzinfo=tz.utc),
+            end_time=dt(2026, 8, 17, 9, 30, tzinfo=tz.utc),
+            recurrence_rule="FREQ=WEEKLY;BYDAY=MO,WE,FR",
+        )
+        event = CalDAVSourceClient._parse_ical(generate_ical(ei))
+        assert event.recurrence_rule == "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+
+    def test_invalid_recurrence_rule_rejected(self):
+        from ical_writer import EventInput, generate_ical
+        from datetime import datetime as dt, timezone as tz
+        with pytest.raises(ValueError):
+            generate_ical(EventInput(
+                title="Bad", start_time=dt(2026, 8, 17, 9, 0, tzinfo=tz.utc),
+                end_time=dt(2026, 8, 17, 9, 30, tzinfo=tz.utc),
+                recurrence_rule="FREQ=BOGUS",
+            ))
+
 
 class TestConnectErrors:
     """

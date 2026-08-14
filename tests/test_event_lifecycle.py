@@ -96,17 +96,31 @@ class TestEventLifecycle:
 
     def test_update_recurring_event_title_still_allowed(self, client, fake_caldav_client, future_window):
         """Sanity check for the test above: recurring events are only
-        locked against TIME changes, not all changes."""
+        locked against TIME changes, not all changes. Also a regression
+        test for a real bug found in task 25: the update merge logic
+        didn't carry recurrence_rule forward from the existing event,
+        so ANY partial update (even just the title) silently stripped
+        recurrence from the event. Asserts on the actual ical payload
+        sent to CalDAV, not just the response, since the response can
+        look fine even when the wrong thing was written."""
         start, end = future_window
         existing = Event(uid="recurring-uid2", title="Standup", start_time=start, end_time=end,
                           recurrence_rule="FREQ=DAILY")
         fake_caldav_client.get_event.return_value = existing
-        fake_caldav_client.update_event.side_effect = lambda uid, ical: Event(
-            uid=uid, title="Renamed Standup", start_time=start, end_time=end,
-            recurrence_rule="FREQ=DAILY")
+
+        captured = {}
+
+        def capture_update(uid, ical):
+            captured["ical"] = ical
+            return Event(uid=uid, title="Renamed Standup", start_time=start, end_time=end,
+                         recurrence_rule="FREQ=DAILY")
+
+        fake_caldav_client.update_event.side_effect = capture_update
         resp = client.put("/api/v1/calendars/icloud/events/recurring-uid2",
                            json={"title": "Renamed Standup"})
         assert resp.status_code == 200
+        assert "RRULE:FREQ=DAILY" in captured["ical"], (
+            "recurrence_rule was dropped by a title-only update")
 
     def test_cache_invalidated_after_write(self, client, fake_caldav_client, future_window):
         """Confirms daily_brief.invalidate() is actually wired into the

@@ -33,7 +33,7 @@ from typing import Optional
 
 from icalendar import Calendar as ICalendar
 from icalendar import Event as IEvent
-from icalendar import vCalAddress, vText
+from icalendar import vCalAddress, vRecur, vText
 
 
 @dataclass
@@ -49,6 +49,10 @@ class EventInput:
     attendees: list[tuple[str, Optional[str]]] = field(default_factory=list)  # (email, name)
     status: str = "confirmed"
     uid: Optional[str] = None  # None on create -> generated; required on update
+    recurrence_rule: Optional[str] = None  # RFC 5545 RRULE value, e.g.
+    # "FREQ=WEEKLY;BYDAY=MO,WE,FR" (task 25 - promotes recurring events
+    # from read-only to full write support). Validated via icalendar's
+    # own RRULE parser before being written - see generate_ical().
 
 
 def generate_ical(data: EventInput) -> str:
@@ -74,6 +78,13 @@ def generate_ical(data: EventInput) -> str:
     if data.location:
         event.add("location", data.location)
     event.add("status", data.status.upper())
+
+    if data.recurrence_rule:
+        try:
+            rrule = vRecur.from_ical(data.recurrence_rule)
+        except (ValueError, KeyError) as exc:
+            raise ValueError(f"Invalid recurrence_rule: {exc}") from exc
+        event.add("rrule", rrule)
     event.add("dtstamp", datetime.now(timezone.utc))
 
     if data.all_day:

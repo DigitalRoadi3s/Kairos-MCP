@@ -172,6 +172,8 @@ class EventCreate(BaseModel):
     all_day: bool = Field(False, description="If true, times are ignored and the event spans the full day")
     location: Optional[str] = Field(None, description="Free-text event location")
     attendees: list[AttendeeIn] = Field(default_factory=list, description="Event attendees")
+    recurrence_rule: Optional[str] = Field(
+        None, description="RFC 5545 RRULE value, e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR'. Omit for a one-off event.")
     timezone: Optional[str] = Field(None, description="Informational only — the wire format is always UTC")
     status: str = Field("confirmed", description="confirmed | tentative | cancelled")
 
@@ -230,6 +232,7 @@ async def create_event(calendar_id: str, body: EventCreate):
             all_day=body.all_day,
             location=body.location,
             attendees=[(a.email, a.name) for a in body.attendees],
+            recurrence_rule=body.recurrence_rule,
             status=body.status,
         ))
     except ValueError as exc:
@@ -273,6 +276,10 @@ async def update_event(calendar_id: str, uid: str, body: EventUpdate):
                    else [(a.email, a.name) for a in existing.attendees]),
         status=body.status if body.status is not None else existing.status,
         uid=uid,
+        recurrence_rule=existing.recurrence_rule,  # never settable via update (task 25:
+        # recurrence changes go through create, not PATCH - see the lock-window
+        # check above that already rejects start_time/end_time changes on
+        # recurring events; the rule itself is likewise immutable via PUT)
     )
 
     try:
