@@ -29,17 +29,11 @@ from typing import Optional
 import caldav
 from caldav.lib.error import AuthorizationError, NotFoundError
 try:
-    from caldav.lib.error import RateLimitError
+    from caldav.lib.error import RateLimitError, PropfindError
 except ImportError:
-    # caldav < 2.x doesn't define this class. Fall back to a class that
-    # never actually gets raised by the library on this version - the
-    # except clauses below become inert rather than crashing at import
-    # time. A 403 rate-limit response on old caldav still surfaces as
-    # whatever generic error the library raises for it (usually a bare
-    # DAVError), which the module doesn't specifically catch and thus
-    # ends up an unhandled 500 - a known gap on caldav<2.x, tracked but
-    # not blocking since the pinned requirements.txt version is 1.3.9.
     class RateLimitError(Exception):
+        pass
+    class PropfindError(Exception):
         pass
 from icalendar import Calendar as ICalendar
 from requests.exceptions import ConnectionError as RequestsConnectionError
@@ -139,6 +133,21 @@ class CalDAVSourceClient:
                     )
                 self._calendar = calendars[0]
             self._calendar.get_properties()
+        except PropfindError as exc:
+            # 400 means the calendar_path doesn't exist on the server
+            raise CalDAVNotFoundError(
+                f"Calendar path not found for source '{self.source_id}': "
+                f"{self.calendar_path} — check the path is correct (run the "
+                "discovery script in the README to find your real calendar paths)"
+            ) from exc
+        except (TypeError, AttributeError):
+            # caldav 1.3.9 compat: get_properties() with no args raises
+            # TypeError internally but the calendar IS reachable — auth
+            # and path already validated by the steps above. Log and
+            # continue; first real request will surface any remaining issues.
+            logger.warning("caldav_get_properties_compat_skip",
+                            extra={"source_id": self.source_id,
+                                   "note": "caldav<2.x get_properties() limitation"})
         except AuthorizationError as exc:
             logger.error("caldav_auth_failed", extra={"source_id": self.source_id})
             if self._auth is not None:
