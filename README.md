@@ -133,29 +133,111 @@ export CALDAV_SOURCES='[{"id":"google","auth_type":"oauth2","url":"https://apida
 | GET | `/health` | Per-source connection + circuit-breaker status |
 | GET | `/metrics` | Prometheus metrics |
 
-### Daily brief example
+### List calendars
 
-`icloud` is the `"id"` from your `CALDAV_SOURCES` config.
+```bash
+curl http://localhost:8080/api/v1/calendars
+```
+
+### List events
+
+```bash
+# Next 7 days
+curl "http://localhost:8080/api/v1/calendars/icloud/events?date_min=2026-08-14T00:00:00Z&date_max=2026-08-21T00:00:00Z"
+
+# With a result cap
+curl "http://localhost:8080/api/v1/calendars/icloud/events?date_min=2026-08-14T00:00:00Z&date_max=2026-09-14T00:00:00Z&limit=25"
+```
+
+Parameters: `date_min` and `date_max` (ISO 8601, default: today → +30 days), `limit` (1–1000, default 100).
+
+### Daily brief
 
 ```bash
 curl "http://localhost:8080/api/v1/calendars/icloud/today?timezone=America/New_York"
 ```
 
-```json
-{
-  "calendar_id": "icloud",
-  "date": "2026-08-14",
-  "summary": {
-    "total_events": 6,
-    "total_calendar_time_minutes": 270,
-    "top_attendees": [{"email": "alice@company.com", "name": "Alice", "count": 2}],
-    "free_slots": [
-      {"start": "2026-08-14T10:30:00-04:00", "end": "2026-08-14T12:30:00-04:00", "duration_minutes": 120}
-    ]
-  },
-  "events": [ ... ]
-}
+Returns today's events, free-slot analysis (gaps > 15 min), total calendar time, and attendee summary. `timezone` defaults to UTC.
+
+### Create an event
+
+```bash
+curl -X POST http://localhost:8080/api/v1/calendars/icloud/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Team standup",
+    "start_time": "2026-08-20T14:00:00-04:00",
+    "end_time":   "2026-08-20T14:30:00-04:00",
+    "location":   "Conf room B",
+    "attendees":  [{"email": "alice@example.com", "name": "Alice"}],
+    "status":     "confirmed"
+  }'
 ```
+
+Create a recurring event by adding `recurrence_rule` (RFC 5545 RRULE):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/calendars/icloud/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":            "Weekly standup",
+    "start_time":       "2026-08-17T09:00:00-04:00",
+    "end_time":         "2026-08-17T09:30:00-04:00",
+    "recurrence_rule":  "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+  }'
+```
+
+Returns the created event including its `uid` — save that if you need to update or delete it later. Events starting within 15 minutes cannot be modified after creation.
+
+### Update an event
+
+PATCH semantics — only fields you include are changed; everything else stays as-is.
+
+```bash
+# Rename an event
+curl -X PUT http://localhost:8080/api/v1/calendars/icloud/events/EVENT-UID-HERE \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Team standup (rescheduled)"}'
+
+# Reschedule
+curl -X PUT http://localhost:8080/api/v1/calendars/icloud/events/EVENT-UID-HERE \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_time": "2026-08-20T15:00:00-04:00",
+    "end_time":   "2026-08-20T15:30:00-04:00"
+  }'
+
+# Change status to tentative
+curl -X PUT http://localhost:8080/api/v1/calendars/icloud/events/EVENT-UID-HERE \
+  -H "Content-Type: application/json" \
+  -d '{"status": "tentative"}'
+```
+
+The `recurrence_rule` of a recurring event cannot be changed via update — delete and recreate to change the recurrence pattern.
+
+### Delete an event
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/calendars/icloud/events/EVENT-UID-HERE
+```
+
+Events starting within 15 minutes are locked and cannot be deleted.
+
+### Health check
+
+```bash
+curl http://localhost:8080/health
+```
+
+Shows connection status and circuit-breaker state per calendar source. Returns 200 when all sources are healthy, 503 if none connected.
+
+### Prometheus metrics
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+Exposes `caldav_request_duration_seconds`, `caldav_calendar_sync_errors_total`, `api_request_duration_seconds`, `api_errors_total`, and `caldav_rate_limit_remaining`.
 
 ## MCP and tool definitions
 
