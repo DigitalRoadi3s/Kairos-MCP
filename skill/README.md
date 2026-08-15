@@ -299,10 +299,19 @@ Tool-capable models for Ollama: `hermes3`, `qwen2.5`, `mistral`, `llama3.1` (8B+
 
 ---
 
+## Chat slash commands
+
+For Claude Desktop / claude.ai's saved-prompt `/commands` (not Claude Code's) —
+see [`commands.md`](commands.md) for ready-to-paste shortcuts like `/agenda`,
+`/today`, and `/calendars`.
+
+---
+
 ## Files
 
 ```
 skill/mcp_server.py    MCP server — Claude Desktop, Claude Code, OpenClaw
 skill/tools.json       OpenAI tool definitions — Hermes, LiteLLM, Ollama
+skill/commands.md      Chat slash-command shortcuts
 skill/requirements.txt mcp>=2.0.0, httpx>=0.27.0
 ```
