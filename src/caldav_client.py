@@ -89,7 +89,8 @@ class CalDAVSourceClient:
     """
 
     def __init__(self, source_id: str, url: str, username: str = None, password: str = None,
-                 calendar_path: Optional[str] = None, timeout: int = 30, auth=None):
+                 calendar_path: Optional[str] = None, timeout: int = 30, auth=None,
+                 display_name: Optional[str] = None):
         """
         auth: an optional requests/niquests-compatible AuthBase instance
         (e.g. google_oauth.GoogleOAuth2Auth). When provided, it's used
@@ -98,6 +99,7 @@ class CalDAVSourceClient:
         two auth modes can't be silently mixed up by a config typo.
         """
         self.source_id = source_id
+        self.name = display_name or source_id  # human-readable display name
         self.url = url
         self.username = username
         self._password = password

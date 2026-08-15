@@ -172,6 +172,7 @@ def load_and_validate() -> tuple[dict[str, CalDAVSourceClient], dict[str, Circui
             password=cfg.password,
             calendar_path=cfg.calendar_path,
             auth=auth,
+            display_name=cfg.name,
         )
         try:
             client.connect()

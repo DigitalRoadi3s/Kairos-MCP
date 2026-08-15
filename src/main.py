@@ -97,8 +97,8 @@ async def list_calendars():
     """FR-7."""
     return {
         "calendars": [
-            {"id": source_id, "name": source_id, "writable": True, "timezone": "UTC"}
-            for source_id in app.state.clients
+            {"id": source_id, "name": client.name, "writable": True, "timezone": "UTC"}
+            for source_id, client in app.state.clients.items()
         ]
     }
 
