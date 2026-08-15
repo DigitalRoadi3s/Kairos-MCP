@@ -39,21 +39,21 @@ Set `CALDAV_SOURCES` to a JSON array — one object per calendar you want expose
 ### iCloud
 
 ```bash
-export CALDAV_SOURCES='[{"id":"icloud","name":"Personal","url":"https://caldav.icloud.com/","username":"you@icloud.com","password":"xxxx-xxxx-xxxx-xxxx","calendar_path":"/caldav/v2/you@icloud.com/calendar/personal/"}]'
+export CALDAV_SOURCES='[{"id":"icloud","name":"Personal","url":"https://caldav.icloud.com/","username":"you@icloud.com","password":"xxxx-xxxx-xxxx-xxxx","calendar_path":"https://p178-caldav.icloud.com/ACCOUNT_ID/calendars/CALENDAR_UUID/"}]'
 ```
 
 **What to actually change before this works:**
 
 | Placeholder | Replace with | Shows up in |
 |---|---|---|
-| `you@icloud.com` | Your real iCloud email | `username`, and usually inside `calendar_path` too |
+| `you@icloud.com` | Your real iCloud email | `username` |
 | `xxxx-xxxx-xxxx-xxxx` | An app-specific password (16 chars, NOT your Apple ID password — generate one at icloud.com/account/security) | `password` |
-| `/caldav/v2/you@icloud.com/calendar/personal/` | The real calendar path — see below, don't guess it | `calendar_path` |
+| `https://p178-caldav.icloud.com/ACCOUNT_ID/calendars/CALENDAR_UUID/` | The full calendar URL from the discovery script below — don't guess it, don't use a relative path | `calendar_path` |
 | `"id":"icloud"` | Any nickname you want | Whatever you put here must match in every curl example below (`/calendars/icloud/...`) |
 
-#### Finding your calendar path
+#### Finding your calendar URL
 
-`https://caldav.icloud.com/` is the address of your whole iCloud account. Each calendar has its own path underneath that — often a random-looking code, not the calendar's display name. Look it up:
+iCloud routes each account to a specific shard server (`p178-caldav.icloud.com`, `p30-caldav.icloud.com`, etc.) and identifies calendars by UUID, not display name. The URL you need looks like `https://p178-caldav.icloud.com/58373301/calendars/A7A8B621-7523-48DF-B3A2-0B6C0481FFC5/` — you cannot construct it manually. Run this to find yours:
 
 ```bash
 pip install caldav
@@ -63,13 +63,13 @@ email = input("Enter iCloud email: ")
 password = input("Enter app-specific password: ")
 client = DAVClient(url="https://caldav.icloud.com/", username=email, password=password)
 for cal in client.principal().calendars():
-    print(f"Display Name: {cal.get_properties()['{DAV:}displayname']}")
-    print(f"Path:         {cal.url}")
+    print(f"Display Name: {cal.name}")
+    print(f"Full URL:     {cal.url}")
     print("---")
 EOF
 ```
 
-Copy the `Path` of the calendar you want into `calendar_path` — verbatim.
+Copy the **Full URL** of the calendar you want into `calendar_path` — the entire `https://...` string, verbatim. The `url` field in the config stays as `https://caldav.icloud.com/`; only `calendar_path` gets the shard-specific URL.
 
 ### Nextcloud
 
