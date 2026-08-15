@@ -28,7 +28,6 @@ from typing import Optional
 
 import httpx
 from mcp.server.mcpserver import MCPServer
-from mcp.server.stdio import stdio_server
 
 GATEWAY_URL = os.getenv("CALDAV_GATEWAY_URL", "http://localhost:8080").rstrip("/")
 
@@ -269,9 +268,4 @@ def gateway_health() -> str:
 
 if __name__ == "__main__":
     import asyncio
-
-    async def main():
-        async with stdio_server() as (read_stream, write_stream):
-            await mcp.run_stdio_async(read_stream, write_stream)
-
-    asyncio.run(main())
+    asyncio.run(mcp.run_stdio_async())
