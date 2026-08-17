@@ -31,7 +31,7 @@ logger = logging.getLogger("caldav_gateway.main")
 
 app = FastAPI(
     title="Kairos-MCP",
-    version="0.1.0",
+    version="1.0.1",
     description="Exposes CalDAV calendar systems as a REST API.",
 )
 

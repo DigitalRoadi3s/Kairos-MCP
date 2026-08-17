@@ -39,7 +39,7 @@ mcp = MCPServer(
         "via Kairos-MCP. Supports event listing, daily brief with free-slot "
         "analysis, and full CRUD including recurring events."
     ),
-    version="1.0.0",
+    version="1.0.1",
 )
 
 
