@@ -1,5 +1,5 @@
 # Kairos-MCP
-
+<img src="assets/kairos-logo.png" alt="Kairos-MCP logo" width="160" />
 **Current version: 1.0.1** — see [CHANGELOG.md](CHANGELOG.md)
 
 A CalDAV REST gateway and MCP server for **multi-agent homelab setups** — where more than one model (Claude, Hermes, a local LLM via OpenClaw) needs to read and write the same calendars through a shared, observable backend.
