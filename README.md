@@ -36,7 +36,7 @@ Start with one of those. Come back here when you're running multiple models and 
 - Events are stored in the calendar's own time zone (TZID plus VTIMEZONE), so they stay correct across DST
 - Read-only calendars (`"writable": false`) are enforced
 - Circuit breaker with backoff per source; writes are never retried, so a timeout can't create duplicates
-- Bearer-token auth on everything; OAuth via your own identity provider for `/mcp`
+- Bearer-token auth on everything; OAuth for `/mcp` through WorkOS AuthKit or your own identity provider
 - Structured JSON logs, Prometheus metrics (`/metrics`), per-source health (`/health`)
 
 ## Quick start
@@ -171,16 +171,42 @@ export KAIROS_API_TOKENS="$(openssl rand -hex 32)"
 
 Tokens must be at least 32 characters. `KAIROS_API_TOKENS_FILE` reads them from a file instead. With no tokens and no OIDC issuer configured, every request is refused; set `KAIROS_INSECURE_NO_AUTH=true` only on a trusted network.
 
-**OAuth for `/mcp`** is for clients that can't send a static header, like claude.ai custom connectors. Kairos doesn't run an authorization server; it validates JWT access tokens from yours (Authentik, Keycloak, Authelia, Zitadel and similar) and publishes the metadata clients need to find it.
+**OAuth for `/mcp`** is for clients that can't send a static header, like claude.ai custom connectors. Kairos doesn't run its own login; it checks tokens from a login service you choose and publishes the discovery documents clients need to find it. API tokens keep working alongside OAuth.
+
+### OAuth with WorkOS AuthKit
+
+[AuthKit](https://workos.com/docs/authkit/mcp) is a hosted login service with a free tier and built-in support for MCP clients registering themselves.
+
+In the WorkOS dashboard:
+
+1. Create an account and an environment (start with Staging, use Production once it works). Note your **AuthKit domain**, like `example-123.authkit.app`.
+2. Under **Connect → Configuration**, turn on **Client ID Metadata Document** and **Dynamic Client Registration**, so claude.ai can register itself.
+3. On the same page, add a **Resource Indicator** of `https://cal.example.com/mcp` (your public URL plus `/mcp`) and set it as the default.
+4. Sign in once through your AuthKit page (or add yourself under **Users**), then copy your user ID (`user_01...`) from **Users**.
+5. If your AuthKit page lets anyone sign up, consider turning sign-up off. Kairos only lets in the user IDs you list either way.
+
+Then on the gateway:
 
 ```bash
-export KAIROS_PUBLIC_URL=https://cal.example.com          # the https URL clients use
+export KAIROS_PUBLIC_URL=https://cal.example.com
+export KAIROS_WORKOS_AUTHKIT_DOMAIN=example-123.authkit.app
+export KAIROS_OIDC_ALLOWED_SUBJECTS=user_01...           # required with AuthKit
+```
+
+Kairos checks each token's signature, issuer (`https://example-123.authkit.app`), audience (`https://cal.example.com/mcp`), expiry and user ID, and rejects WorkOS agent tokens. AuthKit access tokens last five minutes; Claude refreshes them on its own.
+
+### OAuth with another identity provider
+
+Any provider that issues **JWT** access tokens works (Authentik, Keycloak, Zitadel and similar):
+
+```bash
+export KAIROS_PUBLIC_URL=https://cal.example.com
 export KAIROS_OIDC_ISSUER=https://auth.example.com/application/o/kairos/
 export KAIROS_OIDC_REQUIRED_SCOPES=calendar              # optional
 export KAIROS_OIDC_ALLOWED_SUBJECTS=your-user-id         # optional, recommended
 ```
 
-Your identity provider must issue **JWT** access tokens (not opaque ones) whose `aud` is `https://cal.example.com/mcp`, or set `KAIROS_OIDC_AUDIENCE` to what it does send. Kairos finds the signing keys through the issuer's discovery document; set `KAIROS_OIDC_JWKS_URI` if discovery isn't available. API tokens keep working alongside OAuth.
+The token's `aud` must be `https://cal.example.com/mcp`, or set `KAIROS_OIDC_AUDIENCE` to what your provider sends. Kairos finds the signing keys through the issuer's discovery document; set `KAIROS_OIDC_JWKS_URI` if discovery isn't available.
 
 ## Connecting clients
 
@@ -191,7 +217,7 @@ claude mcp add --transport http kairos https://cal.example.com/mcp \
   --header "Authorization: Bearer $KAIROS_TOKEN"
 ```
 
-**claude.ai and Claude Desktop custom connectors**: add `https://cal.example.com/mcp` as a custom connector. This needs the OAuth setup above and a public https URL. If your identity provider doesn't support dynamic client registration, create a client for Claude there and enter its client ID and secret in the connector's advanced settings.
+**claude.ai and Claude Desktop custom connectors**: add `https://cal.example.com/mcp` as a custom connector, then connect and sign in. This needs one of the OAuth setups above and a public https URL. With AuthKit, leave the connector's client ID and secret empty; Claude registers itself. With another provider that can't do that, create a client for Claude there and enter its client ID and secret in the connector's advanced settings.
 
 **Local stdio** (Claude Desktop config, OpenClaw): `kairos mcp-stdio` runs the same tools over stdio with the same environment variables. It talks to CalDAV directly, so it doesn't share rate limits or circuit-breaker state with a running gateway; prefer `/mcp` when several agents are involved.
 
@@ -312,10 +338,11 @@ Errors return `{"detail": "...", "error": "<code>"}`.
 | `DEFAULT_TIMEZONE` | `UTC` | Zone for sources that don't set one |
 | `KAIROS_API_TOKENS` / `_FILE` | | Comma-separated bearer tokens |
 | `KAIROS_PUBLIC_URL` | | Public https URL; needed for OAuth |
-| `KAIROS_OIDC_ISSUER` | | Your identity provider's issuer URL |
+| `KAIROS_WORKOS_AUTHKIT_DOMAIN` | | Your AuthKit domain, for WorkOS login |
+| `KAIROS_OIDC_ISSUER` | | Another identity provider's issuer URL |
 | `KAIROS_OIDC_AUDIENCE` | `{public url}/mcp` | Accepted `aud` values, comma-separated |
 | `KAIROS_OIDC_REQUIRED_SCOPES` | | Scopes every token must carry |
-| `KAIROS_OIDC_ALLOWED_SUBJECTS` | any | Only these `sub` values may connect |
+| `KAIROS_OIDC_ALLOWED_SUBJECTS` | any | Only these user IDs may connect; required with AuthKit |
 | `KAIROS_OIDC_JWKS_URI` | discovered | Signing keys URL |
 | `KAIROS_ALLOWED_HOSTS` | | Hostnames `/mcp` answers to (DNS-rebinding protection) |
 | `KAIROS_LOCK_WINDOW_MINUTES` | `15` | Edit lock before a one-off event starts |

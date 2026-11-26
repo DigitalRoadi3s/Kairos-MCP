@@ -50,6 +50,7 @@ class OIDCConfig:
     required_scopes: tuple[str, ...] = ()
     jwks_uri: str | None = None  # discovered from the issuer when unset
     allowed_subjects: tuple[str, ...] = ()  # empty = any subject the issuer vouches for
+    provider: str = "oidc"  # "oidc" (any issuer) or "workos" (WorkOS AuthKit)
 
 
 @dataclass(frozen=True)
@@ -166,25 +167,61 @@ def parse_sources(entries: list[dict[str, Any]], default_tz: str) -> tuple[Sourc
     return tuple(configs)
 
 
+def _authkit_issuer(value: str) -> str:
+    host = value.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not host or "/" in host or " " in host:
+        raise ConfigError(
+            f"KAIROS_WORKOS_AUTHKIT_DOMAIN must be your AuthKit hostname, like example-123.authkit.app; got {value!r}"
+        )
+    return f"https://{host}"
+
+
+def _oidc_config(env: dict[str, str], public_url: str | None) -> OIDCConfig | None:
+    issuer = env.get("KAIROS_OIDC_ISSUER")
+    authkit = env.get("KAIROS_WORKOS_AUTHKIT_DOMAIN")
+    if not issuer and not authkit:
+        return None
+    if issuer and authkit:
+        raise ConfigError("Set KAIROS_OIDC_ISSUER or KAIROS_WORKOS_AUTHKIT_DOMAIN, not both.")
+    which = "KAIROS_WORKOS_AUTHKIT_DOMAIN" if authkit else "KAIROS_OIDC_ISSUER"
+    if not public_url:
+        raise ConfigError(f"{which} needs KAIROS_PUBLIC_URL (the https URL clients use).")
+    audiences = _split(env.get("KAIROS_OIDC_AUDIENCE")) or (f"{public_url}/mcp",)
+    allowed = _split(env.get("KAIROS_OIDC_ALLOWED_SUBJECTS"))
+    scopes = _split(env.get("KAIROS_OIDC_REQUIRED_SCOPES"))
+    if authkit:
+        # AuthKit lets anyone sign up by default, so an allow-list is what keeps strangers out.
+        if not allowed:
+            raise ConfigError(
+                "KAIROS_WORKOS_AUTHKIT_DOMAIN needs KAIROS_OIDC_ALLOWED_SUBJECTS: your WorkOS user id "
+                "(user_...), from the Users page of the WorkOS dashboard."
+            )
+        base = _authkit_issuer(authkit)
+        return OIDCConfig(
+            issuer=base,
+            audiences=audiences,
+            required_scopes=scopes,
+            jwks_uri=env.get("KAIROS_OIDC_JWKS_URI") or f"{base}/oauth2/jwks",
+            allowed_subjects=allowed,
+            provider="workos",
+        )
+    assert issuer is not None
+    return OIDCConfig(
+        issuer=issuer.strip(),  # kept as typed: metadata must name the issuer exactly as it names itself
+        audiences=audiences,
+        required_scopes=scopes,
+        jwks_uri=env.get("KAIROS_OIDC_JWKS_URI") or None,
+        allowed_subjects=allowed,
+    )
+
+
 def load_settings(environ: dict[str, str] | None = None) -> Settings:
     env = dict(os.environ if environ is None else environ)
     default_tz = _check_timezone(env.get("DEFAULT_TIMEZONE", "UTC"), "DEFAULT_TIMEZONE")
     sources = parse_sources(_raw_source_entries(env), default_tz)
 
     public_url = (env.get("KAIROS_PUBLIC_URL") or "").rstrip("/") or None
-    oidc = None
-    issuer = env.get("KAIROS_OIDC_ISSUER")
-    if issuer:
-        if not public_url:
-            raise ConfigError("KAIROS_OIDC_ISSUER needs KAIROS_PUBLIC_URL (the https URL clients use).")
-        audiences = _split(env.get("KAIROS_OIDC_AUDIENCE")) or (f"{public_url}/mcp",)
-        oidc = OIDCConfig(
-            issuer=issuer.rstrip("/"),
-            audiences=audiences,
-            required_scopes=_split(env.get("KAIROS_OIDC_REQUIRED_SCOPES")),
-            jwks_uri=env.get("KAIROS_OIDC_JWKS_URI") or None,
-            allowed_subjects=_split(env.get("KAIROS_OIDC_ALLOWED_SUBJECTS")),
-        )
+    oidc = _oidc_config(env, public_url)
 
     tokens = frozenset(_split(_env("KAIROS_API_TOKENS", env)))
     weak = [t for t in tokens if len(t) < 32]

@@ -13,10 +13,10 @@ services:
       KAIROS_API_TOKENS_FILE: /run/secrets/kairos_api_tokens
       # Hostnames /mcp answers to; set this when the gateway is reachable by name.
       # KAIROS_ALLOWED_HOSTS: "cal.example.com"
-      # OAuth for claude.ai custom connectors (see README, "Authentication"):
+      # OAuth for claude.ai custom connectors via WorkOS AuthKit (see README, "Authentication"):
       # KAIROS_PUBLIC_URL: "https://cal.example.com"
-      # KAIROS_OIDC_ISSUER: "https://auth.example.com/application/o/kairos/"
-      # KAIROS_OIDC_ALLOWED_SUBJECTS: "your-user-id"
+      # KAIROS_WORKOS_AUTHKIT_DOMAIN: "example-123.authkit.app"
+      # KAIROS_OIDC_ALLOWED_SUBJECTS: "user_01..."
     secrets:
       - caldav_sources
       - kairos_api_tokens

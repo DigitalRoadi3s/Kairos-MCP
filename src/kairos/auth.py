@@ -4,7 +4,8 @@ Two kinds of bearer token are accepted:
 
 * Static API tokens (KAIROS_API_TOKENS) for your own scripts and agents.
 * JWT access tokens from an external OAuth 2.0 / OIDC authorization server
-  (KAIROS_OIDC_ISSUER), which is what claude.ai custom connectors use. Kairos
+  (KAIROS_OIDC_ISSUER, or WorkOS AuthKit via KAIROS_WORKOS_AUTHKIT_DOMAIN),
+  which is what claude.ai custom connectors use. Kairos
   acts only as a resource server: it publishes Protected Resource Metadata
   (RFC 9728) pointing at your issuer and validates the tokens it issues.
 """
@@ -47,7 +48,7 @@ class OIDCVerifier:
         return self._jwks
 
     async def _discover_jwks_uri(self) -> str:
-        issuer = self.config.issuer
+        issuer = self.config.issuer.rstrip("/")
         candidates = [
             f"{issuer}/.well-known/openid-configuration",
             f"{issuer}/.well-known/oauth-authorization-server",
@@ -82,8 +83,12 @@ class OIDCVerifier:
             logger.info("oidc_token_rejected", extra={"reason": type(exc).__name__})
             return None
 
-        if str(claims.get("iss", "")).rstrip("/") != self.config.issuer:
+        if str(claims.get("iss", "")).rstrip("/") != self.config.issuer.rstrip("/"):
             logger.info("oidc_token_rejected", extra={"reason": "issuer_mismatch"})
+            return None
+        if self.config.provider == "workos" and claims.get("sub_profile") == "ai_agent":
+            # WorkOS agent (machine) tokens aren't a person signing in.
+            logger.info("oidc_token_rejected", extra={"reason": "agent_token"})
             return None
         subject = str(claims.get("sub", ""))
         if self.config.allowed_subjects and subject not in self.config.allowed_subjects:

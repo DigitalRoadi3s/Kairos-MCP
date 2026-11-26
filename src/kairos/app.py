@@ -15,7 +15,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from kairos import __version__
-from kairos.api import rest
+from kairos.api import rest, wellknown
 from kairos.api.mcp import build_mcp
 from kairos.auth import TokenVerifier
 from kairos.errors import KairosError
@@ -121,7 +121,9 @@ def create_app(settings: Settings | None = None, service: CalendarService | None
         return response
 
     app.include_router(rest.public)
+    # Registered before the MCP mount so these discovery documents win over the SDK's own.
+    app.include_router(wellknown.build_router(settings))
     app.include_router(rest.router, dependencies=[Depends(rest.require_auth)])
-    # The MCP sub-app owns /mcp and, with OIDC, /.well-known/oauth-protected-resource/mcp.
+    # The MCP sub-app owns /mcp.
     app.mount("/", StaticBearerGate(mcp_app, verifier) if not (sdk_auth or settings.insecure_no_auth) else mcp_app)
     return app

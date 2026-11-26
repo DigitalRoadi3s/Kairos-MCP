@@ -109,7 +109,7 @@ def test_oidc() -> None:
     assert s.public_url == "https://cal.example.com"
     assert s.mcp_resource_url == "https://cal.example.com/mcp"
     assert s.oidc is not None
-    assert s.oidc.issuer == "https://id.example.com/app"
+    assert s.oidc.issuer == "https://id.example.com/app/"
     assert s.oidc.audiences == ("https://cal.example.com/mcp",)
     assert s.oidc.required_scopes == ("calendar", "openid")
     assert s.oidc.allowed_subjects == ("eric",)
@@ -117,3 +117,37 @@ def test_oidc() -> None:
 
 def test_repr_hides_tokens() -> None:
     assert TOKEN not in repr(load_settings(env()))
+
+
+class TestWorkOS:
+    def env(self, **kw: str) -> dict[str, str]:
+        return env(KAIROS_PUBLIC_URL="https://cal.example.com", KAIROS_OIDC_ALLOWED_SUBJECTS="user_01ABC", **kw)
+
+    @pytest.mark.parametrize("domain", ["example-123.authkit.app", "https://example-123.authkit.app/"])
+    def test_authkit(self, domain: str) -> None:
+        s = load_settings(self.env(KAIROS_WORKOS_AUTHKIT_DOMAIN=domain))
+        assert s.oidc is not None
+        assert s.oidc.provider == "workos"
+        assert s.oidc.issuer == "https://example-123.authkit.app"
+        assert s.oidc.jwks_uri == "https://example-123.authkit.app/oauth2/jwks"
+        assert s.oidc.audiences == ("https://cal.example.com/mcp",)
+        assert s.oidc.required_scopes == ()
+        assert s.oidc.allowed_subjects == ("user_01ABC",)
+
+    def test_needs_allow_list(self) -> None:
+        with pytest.raises(ConfigError, match="user id"):
+            load_settings(
+                env(KAIROS_PUBLIC_URL="https://cal.example.com", KAIROS_WORKOS_AUTHKIT_DOMAIN="x.authkit.app")
+            )
+
+    def test_needs_public_url(self) -> None:
+        with pytest.raises(ConfigError, match="KAIROS_PUBLIC_URL"):
+            load_settings(env(KAIROS_WORKOS_AUTHKIT_DOMAIN="x.authkit.app", KAIROS_OIDC_ALLOWED_SUBJECTS="u"))
+
+    def test_not_both(self) -> None:
+        with pytest.raises(ConfigError, match="not both"):
+            load_settings(self.env(KAIROS_WORKOS_AUTHKIT_DOMAIN="x.authkit.app", KAIROS_OIDC_ISSUER="https://id"))
+
+    def test_bad_domain(self) -> None:
+        with pytest.raises(ConfigError, match="hostname"):
+            load_settings(self.env(KAIROS_WORKOS_AUTHKIT_DOMAIN="https://x.authkit.app/oauth2"))

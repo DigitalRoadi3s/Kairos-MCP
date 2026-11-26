@@ -30,8 +30,10 @@ itself over streamable HTTP at `/mcp`.
 
 ### Added
 - MCP over streamable HTTP at `/mcp`, protected by the same API tokens, or by
-  OAuth through your own identity provider (`KAIROS_OIDC_ISSUER`), with
-  protected-resource metadata so claude.ai custom connectors can discover it.
+  OAuth through WorkOS AuthKit (`KAIROS_WORKOS_AUTHKIT_DOMAIN`) or another
+  identity provider (`KAIROS_OIDC_ISSUER`), with protected-resource metadata
+  so claude.ai custom connectors can discover it. With AuthKit an allow-list
+  of user IDs is required.
 - `get_event` (MCP) and `GET /api/v1/calendars/{id}/events/{uid}` (REST).
 - `PATCH` as an alias for `PUT` on events.
 - `timezone` on create sets the zone the event is stored in; `timezone` on

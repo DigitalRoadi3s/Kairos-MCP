@@ -136,3 +136,15 @@ def test_discovery_falls_back_to_oauth_metadata() -> None:
             return await v._discover_jwks_uri()
 
     assert anyio.run(go) == ISSUER + "/jwks/"
+
+
+def test_workos_rejects_agent_tokens() -> None:
+    v = oidc(scopes=(), provider="workos")
+    assert verify(v, token(scope=None)) is not None
+    assert verify(v, token(scope=None, sub_profile="ai_agent")) is None
+
+
+def test_trailing_slash_issuer_matches() -> None:
+    v = oidc()
+    v.config = OIDCConfig(issuer=ISSUER + "/", audiences=(AUD,), required_scopes=("calendar",))
+    assert verify(v, token()) is not None

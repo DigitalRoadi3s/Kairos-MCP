@@ -131,9 +131,59 @@ def test_protected_resource_metadata_with_oidc() -> None:
         assert meta.status_code == 200
         body = meta.json()
         assert body["resource"] == "https://cal.example.com/mcp"
-        assert body["authorization_servers"] == ["https://id.example.com/"]
+        assert body["authorization_servers"] == ["https://id.example.com"]
+        assert body["scopes_supported"] == ["calendar"]
+        assert client.get("/.well-known/oauth-protected-resource").json() == body
+        assert client.get("/.well-known/oauth-authorization-server").status_code == 404
         unauth = rpc(client, "initialize", headers={k: v for k, v in HEADERS.items() if k != "Authorization"})
         assert unauth.status_code == 401
         assert "resource_metadata=" in unauth.headers["www-authenticate"]
         # static tokens still work alongside OIDC
         initialize(client)
+
+
+def test_workos_discovery() -> None:
+    import httpx
+    from fastapi import FastAPI
+
+    from kairos.api.wellknown import build_router
+
+    authkit = "https://example-123.authkit.app"
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, json={"issuer": authkit, "registration_endpoint": f"{authkit}/oauth2/register"})
+
+    settings = make_settings(
+        public_url="https://cal.example.com",
+        oidc=OIDCConfig(
+            issuer=authkit, audiences=("https://cal.example.com/mcp",), allowed_subjects=("user_1",), provider="workos"
+        ),
+    )
+    app = FastAPI()
+    app.include_router(build_router(settings, httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    client = TestClient(app)
+    prm = client.get("/.well-known/oauth-protected-resource/mcp").json()
+    assert prm["authorization_servers"] == [authkit]
+    assert "scopes_supported" not in prm
+    meta = client.get("/.well-known/oauth-authorization-server")
+    assert meta.json()["registration_endpoint"] == f"{authkit}/oauth2/register"
+    client.get("/.well-known/oauth-authorization-server")
+    assert calls == [f"{authkit}/.well-known/oauth-authorization-server"]  # cached
+
+
+def test_workos_discovery_upstream_down() -> None:
+    import httpx
+    from fastapi import FastAPI
+
+    from kairos.api.wellknown import build_router
+
+    settings = make_settings(
+        public_url="https://cal.example.com",
+        oidc=OIDCConfig(issuer="https://x.authkit.app", audiences=("a",), allowed_subjects=("u",), provider="workos"),
+    )
+    app = FastAPI()
+    transport = httpx.MockTransport(lambda r: httpx.Response(503))
+    app.include_router(build_router(settings, httpx.AsyncClient(transport=transport)))
+    assert TestClient(app).get("/.well-known/oauth-authorization-server").status_code == 502
