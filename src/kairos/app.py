@@ -20,6 +20,7 @@ from kairos.api.mcp import build_mcp
 from kairos.auth import TokenVerifier
 from kairos.errors import KairosError
 from kairos.observability import api_errors_total, api_request_duration_seconds, setup_logging
+from kairos.resolver import ServiceResolver, reset_static_token, set_static_token, static_resolver
 from kairos.service import CalendarService
 from kairos.settings import Settings, load_settings
 
@@ -37,8 +38,8 @@ class StaticBearerGate:
         if scope["type"] == "http" and scope["path"].startswith("/mcp"):
             headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
             scheme, _, token = headers.get("authorization", "").partition(" ")
-            ok = scheme.lower() == "bearer" and await self.verifier.verify_token(token.strip()) is not None
-            if not ok:
+            access = await self.verifier.verify_token(token.strip()) if scheme.lower() == "bearer" else None
+            if access is None:
                 response = JSONResponse(
                     {"error": "invalid_token", "error_description": "Authentication required"},
                     status_code=401,
@@ -46,6 +47,12 @@ class StaticBearerGate:
                 )
                 await response(scope, receive, send)
                 return
+            marker = set_static_token(access)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                reset_static_token(marker)
+            return
         await self.app(scope, receive, send)
 
 
@@ -59,11 +66,28 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
     return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
-def create_app(settings: Settings | None = None, service: CalendarService | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    service: CalendarService | None = None,
+    *,
+    resolver: ServiceResolver | None = None,
+    verifier: TokenVerifier | None = None,
+) -> FastAPI:
+    """Build the app.
+
+    Self-hosted: pass nothing, or a service. Multi-user: pass a resolver that
+    returns each caller's own service (see kairos.resolver); the app then
+    owns no service and starts none. A host whose issuer needs its own token
+    checks passes a verifier built with that OIDCVerifier.
+    """
     settings = settings or load_settings()
     setup_logging(settings.log_level)
-    service = service or CalendarService(settings)
-    verifier = TokenVerifier(settings)
+    if resolver is None:
+        service = service or CalendarService(settings)
+        resolver = static_resolver(service)
+    elif service is not None:
+        raise ValueError("Pass a service or a resolver, not both")
+    verifier = verifier or TokenVerifier(settings)
 
     if settings.insecure_no_auth:
         logger.warning("auth_disabled", extra={"note": "KAIROS_INSECURE_NO_AUTH is set; anyone can use the API"})
@@ -74,7 +98,7 @@ def create_app(settings: Settings | None = None, service: CalendarService | None
         )
 
     sdk_auth = settings.oidc is not None and not settings.insecure_no_auth
-    mcp = build_mcp(service, settings, verifier if sdk_auth else None)
+    mcp = build_mcp(service, settings, verifier if sdk_auth else None, resolver=resolver)
     mcp_app = mcp.streamable_http_app(
         streamable_http_path="/mcp",
         stateless_http=True,
@@ -85,10 +109,12 @@ def create_app(settings: Settings | None = None, service: CalendarService | None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await service.start()
+        if service is not None:
+            await service.start()
         async with mcp.session_manager.run():
             yield
-        await service.close()
+        if service is not None:
+            await service.close()
 
     app = FastAPI(
         title="Kairos-MCP",
@@ -98,6 +124,7 @@ def create_app(settings: Settings | None = None, service: CalendarService | None
     )
     app.state.settings = settings
     app.state.service = service
+    app.state.resolver = resolver
     app.state.verifier = verifier
 
     @app.exception_handler(KairosError)

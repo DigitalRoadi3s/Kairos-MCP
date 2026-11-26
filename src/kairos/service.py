@@ -31,9 +31,9 @@ from kairos.errors import (
 )
 from kairos.models import CalendarInfo, Event, EventCreate, EventPatch
 from kairos.observability import caldav_calendar_sync_errors_total, caldav_request_duration_seconds
+from kairos.providers import load_providers
 from kairos.resilience import CircuitBreaker
 from kairos.settings import Settings, SourceConfig
-from kairos.sources.caldav_source import CalDAVSource
 
 logger = logging.getLogger("kairos.service")
 
@@ -43,7 +43,7 @@ DEFAULT_RANGE_DAYS = 30
 
 
 class Source(Protocol):
-    """What the service needs from a calendar backend. CalDAVSource implements it."""
+    """What the service needs from a calendar backend. CalDAVSource implements it; plugins add more."""
 
     id: str
     config: SourceConfig
@@ -102,20 +102,32 @@ class CalendarService:
     def __init__(
         self,
         settings: Settings,
-        source_factory: Callable[[SourceConfig], Source] = CalDAVSource,
+        source_factory: Callable[[SourceConfig], Source] | None = None,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         breaker_factory: Callable[[str], CircuitBreaker] = CircuitBreaker,
     ) -> None:
+        """source_factory defaults to the installed providers (see kairos.providers).
+
+        With the default, a calendar whose provider is read-only is read-only here too.
+        """
         self.settings = settings
         self._now = clock
         self.brief_cache = brief_mod.BriefCache()
         self._handles: dict[str, _Handle] = {}
+        registry = load_providers() if source_factory is None else None
         for cfg in settings.sources:
+            if registry is not None:
+                source = registry.source_factory(cfg)
+                writable = cfg.writable and registry.get(cfg.provider).two_way
+            else:
+                assert source_factory is not None
+                source = source_factory(cfg)
+                writable = cfg.writable
             self._handles[cfg.id] = _Handle(
-                source=source_factory(cfg),
+                source=source,
                 breaker=breaker_factory(cfg.id),
-                info=CalendarInfo(id=cfg.id, name=cfg.name, writable=cfg.writable, timezone=cfg.timezone),
+                info=CalendarInfo(id=cfg.id, name=cfg.name, writable=writable, timezone=cfg.timezone),
             )
 
     # ------------------------------------------------------------------ lifecycle

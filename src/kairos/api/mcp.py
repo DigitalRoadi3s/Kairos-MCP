@@ -20,6 +20,7 @@ from kairos import __version__
 from kairos.auth import TokenVerifier
 from kairos.errors import KairosError
 from kairos.models import AttendeeIn, EventCreate, EventPatch, EventStatus
+from kairos.resolver import ServiceResolver, current_token, static_resolver
 from kairos.service import CalendarService, event_to_dict, parse_timezone
 from kairos.settings import Settings
 
@@ -69,13 +70,31 @@ def _attendees(raw: list[dict[str, Any]] | None) -> list[AttendeeIn] | None:
         raise ToolError(f"invalid_request: attendees: {exc}") from exc
 
 
-def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerifier | None = None) -> MCPServer:
+def build_mcp(
+    service: CalendarService | None,
+    settings: Settings,
+    verifier: TokenVerifier | None = None,
+    *,
+    resolver: ServiceResolver | None = None,
+) -> MCPServer:
     """Build the MCP server.
 
     Pass a verifier only when an OIDC issuer is configured: the SDK then guards /mcp and
     publishes Protected Resource Metadata pointing at that issuer. Static-token-only
     setups are guarded by the app's own middleware instead (see kairos.app).
+
+    Tools answer from `service`, or, when a resolver is given, from the service it
+    returns for the caller's token on each call.
     """
+    if resolver is None:
+        if service is None:
+            raise ValueError("build_mcp needs a service or a resolver")
+        resolver = static_resolver(service)
+    resolve = resolver
+
+    async def svc() -> CalendarService:
+        return await _run(resolve(current_token()))
+
     auth = None
     if verifier is not None:
         if settings.oidc is None or settings.mcp_resource_url is None:
@@ -106,7 +125,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
         return {
             "calendars": [
                 {"id": c.id, "name": c.name, "writable": c.writable, "timezone": c.timezone}
-                for c in service.calendars()
+                for c in (await svc()).calendars()
             ]
         }
 
@@ -126,7 +145,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
         """
         tz = parse_timezone(timezone) if timezone else None
         events, matched = await _run(
-            service.list_events(
+            (await svc()).list_events(
                 calendar_id, _dt(date_min, "date_min"), _dt(date_max, "date_max"), max(1, min(limit, 1000))
             )
         )
@@ -141,7 +160,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
     async def get_event(calendar_id: str, uid: str, timezone: str | None = None) -> dict[str, Any]:
         """Get one event by uid. For a recurring event this returns the series."""
         tz = parse_timezone(timezone) if timezone else None
-        return event_to_dict(await _run(service.get_event(calendar_id, uid)), tz)
+        return event_to_dict(await _run((await svc()).get_event(calendar_id, uid)), tz)
 
     @mcp.tool(annotations=READ)
     async def daily_brief(calendar_id: str, timezone: str | None = None) -> dict[str, Any]:
@@ -150,7 +169,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
         timezone is an IANA name; it defaults to the calendar's configured zone. Use this for
         morning briefings and "what's on today" or "when am I free today" questions.
         """
-        return await _run(service.daily_brief(calendar_id, timezone))
+        return await _run((await svc()).daily_brief(calendar_id, timezone))
 
     @mcp.tool(annotations=WRITE)
     async def create_event(
@@ -188,7 +207,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
             )
         except ValueError as exc:
             raise ToolError(f"invalid_request: {exc}") from exc
-        return event_to_dict(await _run(service.create_event(calendar_id, body)))
+        return event_to_dict(await _run((await svc()).create_event(calendar_id, body)))
 
     @mcp.tool(annotations=UPDATE)
     async def update_event(
@@ -224,7 +243,7 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
             patch = EventPatch.model_validate({k: v for k, v in fields.items() if v is not None})
         except ValueError as exc:
             raise ToolError(f"invalid_request: {exc}") from exc
-        return event_to_dict(await _run(service.update_event(calendar_id, uid, patch)))
+        return event_to_dict(await _run((await svc()).update_event(calendar_id, uid, patch)))
 
     @mcp.tool(annotations=DELETE)
     async def delete_event(calendar_id: str, uid: str) -> dict[str, Any]:
@@ -232,12 +251,12 @@ def build_mcp(service: CalendarService, settings: Settings, verifier: TokenVerif
 
         Confirm with the user first; this can't be undone.
         """
-        await _run(service.delete_event(calendar_id, uid))
+        await _run((await svc()).delete_event(calendar_id, uid))
         return {"uid": uid, "status": "deleted"}
 
     @mcp.tool(annotations=READ)
     async def gateway_health() -> dict[str, Any]:
         """Connection and circuit-breaker status for each calendar source. Use it to diagnose failures."""
-        return service.health()
+        return (await svc()).health()
 
     return mcp

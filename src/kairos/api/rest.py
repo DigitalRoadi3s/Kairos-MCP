@@ -11,15 +11,17 @@ from fastapi.responses import JSONResponse
 from kairos.errors import InvalidRequestError
 from kairos.models import Event, EventCreate, EventPatch
 from kairos.observability import render
+from kairos.resolver import ServiceResolver
 from kairos.service import CalendarService, event_to_dict
 
 router = APIRouter()
 public = APIRouter()
 
 
-def get_service(request: Request) -> CalendarService:
-    service: CalendarService = request.app.state.service
-    return service
+async def get_service(request: Request) -> CalendarService:
+    """The caller's service. require_auth runs first and records the caller's token."""
+    resolver: ServiceResolver = request.app.state.resolver
+    return await resolver(getattr(request.state, "access_token", None))
 
 
 async def require_auth(request: Request) -> None:
@@ -33,8 +35,10 @@ async def require_auth(request: Request) -> None:
         raise HTTPException(401, "Missing bearer token", headers={"WWW-Authenticate": "Bearer"})
     if not verifier.configured:
         raise HTTPException(401, "No API tokens are configured on this server", headers={"WWW-Authenticate": "Bearer"})
-    if await verifier.verify_token(token.strip()) is None:
+    access = await verifier.verify_token(token.strip())
+    if access is None:
         raise HTTPException(401, "Invalid bearer token", headers={"WWW-Authenticate": "Bearer"})
+    request.state.access_token = access
 
 
 Service = Annotated[CalendarService, Depends(get_service)]
@@ -63,7 +67,11 @@ def _write_result(e: Event, calendar_id: str) -> dict[str, Any]:
 
 
 @public.get("/health")
-async def health(service: Service) -> JSONResponse:
+async def health(request: Request) -> JSONResponse:
+    service: CalendarService | None = request.app.state.service
+    if service is None:
+        # Multi-user: no shared calendars to report, so this is a liveness check.
+        return JSONResponse({"status": "healthy", "calendars": {}})
     body = service.health()
     return JSONResponse(body, status_code=200 if body["status"] == "healthy" else 503)
 

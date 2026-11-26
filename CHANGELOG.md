@@ -6,6 +6,17 @@ A restructure into one installable package (`kairos`) with a shared calendar
 core, a REST adapter and an MCP adapter. MCP is now served by the gateway
 itself over streamable HTTP at `/mcp`.
 
+### Added
+- **Provider plugins.** A calendar source can name a `provider`; the
+  default, `caldav`, covers every CalDAV server as before. Packages add
+  providers through the `kairos.providers` entry point group. A plugin that
+  fails to load is logged and skipped, and a read-only provider makes its
+  calendars read-only.
+- **Per-caller services for multi-user hosts.** `create_app(resolver=...)`
+  takes an async function that returns the caller's own `CalendarService`
+  from their verified token, for every REST request and MCP tool call.
+  Self-hosted setups are unchanged.
+
 ### Breaking
 - **Auth is on by default.** Every endpoint except `/health` and `/metrics`
   needs `Authorization: Bearer <token>`. Set `KAIROS_API_TOKENS` (32+

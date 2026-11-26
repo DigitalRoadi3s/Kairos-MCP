@@ -30,6 +30,7 @@ class SourceConfig:
     name: str
     url: str
     auth_type: Literal["basic", "oauth2"] = "basic"
+    provider: str = "caldav"  # a name from kairos.providers
     username: str | None = None
     password: str | None = field(default=None, repr=False)
     client_id: str | None = None
@@ -153,6 +154,7 @@ def parse_sources(entries: list[dict[str, Any]], default_tz: str) -> tuple[Sourc
                 name=str(entry.get("name") or source_id),
                 url=str(entry["url"]),
                 auth_type=auth_type,
+                provider=str(entry.get("provider") or "caldav"),
                 username=entry.get("username"),
                 password=entry.get("password"),
                 client_id=entry.get("client_id"),
