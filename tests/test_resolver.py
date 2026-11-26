@@ -105,3 +105,27 @@ def test_service_and_resolver_are_exclusive() -> None:
 
     with pytest.raises(ValueError, match="not both"):
         create_app(make_settings(), one_calendar("x"), resolver=resolver)
+
+
+def test_custom_verifier_is_used() -> None:
+    from kairos.auth import TokenVerifier
+
+    class OnlyCarol(TokenVerifier):
+        async def verify_token(self, token: str) -> AccessToken | None:
+            if token == "carol-token":
+                return AccessToken(token=token, client_id="c", scopes=[], subject="carol")
+            return None
+
+    seen: list[str | None] = []
+
+    async def resolver(token: AccessToken | None) -> CalendarService:
+        seen.append(token.subject if token else None)
+        return one_calendar("carol-home")
+
+    settings = make_settings(sources=())
+    app = create_app(settings, resolver=resolver, verifier=OnlyCarol(settings))
+    with TestClient(app) as c:
+        assert c.get("/api/v1/calendars", headers=auth(ALICE)).status_code == 401
+        resp = c.get("/api/v1/calendars", headers=auth("carol-token"))
+    assert resp.status_code == 200
+    assert seen == ["carol"]

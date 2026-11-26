@@ -71,12 +71,14 @@ def create_app(
     service: CalendarService | None = None,
     *,
     resolver: ServiceResolver | None = None,
+    verifier: TokenVerifier | None = None,
 ) -> FastAPI:
     """Build the app.
 
     Self-hosted: pass nothing, or a service. Multi-user: pass a resolver that
     returns each caller's own service (see kairos.resolver); the app then
-    owns no service and starts none.
+    owns no service and starts none. A host whose issuer needs its own token
+    checks passes a verifier built with that OIDCVerifier.
     """
     settings = settings or load_settings()
     setup_logging(settings.log_level)
@@ -85,7 +87,7 @@ def create_app(
         resolver = static_resolver(service)
     elif service is not None:
         raise ValueError("Pass a service or a resolver, not both")
-    verifier = TokenVerifier(settings)
+    verifier = verifier or TokenVerifier(settings)
 
     if settings.insecure_no_auth:
         logger.warning("auth_disabled", extra={"note": "KAIROS_INSECURE_NO_AUTH is set; anyone can use the API"})
