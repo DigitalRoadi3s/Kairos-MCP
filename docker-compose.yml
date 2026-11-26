@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   kairos-mcp:
     build: .
@@ -7,32 +5,33 @@ services:
     ports:
       - "8080:8080"
     environment:
-      CALDAV_SOURCES: |
-        [
-          {
-            "id": "icloud",
-            "name": "iCloud Personal",
-            "url": "https://caldav.icloud.com/",
-            "username": "your-email@icloud.com",
-            "password": "xxxx-xxxx-xxxx-xxxx",
-            "calendar_path": "/caldav/v2/your-email@icloud.com/calendar/personal/",
-            "writable": true
-          }
-        ]
-      LOG_LEVEL: "info"
       DEFAULT_TIMEZONE: "America/New_York"
-      DNS_SERVERS: "192.168.1.1,8.8.8.8"
+      LOG_LEVEL: "info"
+      # Calendar sources and API tokens come from secret files (below), so
+      # passwords never sit in this file or in `docker inspect`.
+      CALDAV_SOURCES_FILE: /run/secrets/caldav_sources
+      KAIROS_API_TOKENS_FILE: /run/secrets/kairos_api_tokens
+      # Hostnames /mcp answers to; set this when the gateway is reachable by name.
+      # KAIROS_ALLOWED_HOSTS: "cal.example.com"
+      # OAuth for claude.ai custom connectors (see README, "Authentication"):
+      # KAIROS_PUBLIC_URL: "https://cal.example.com"
+      # KAIROS_OIDC_ISSUER: "https://auth.example.com/application/o/kairos/"
+      # KAIROS_OIDC_ALLOWED_SUBJECTS: "your-user-id"
+    secrets:
+      - caldav_sources
+      - kairos_api_tokens
     restart: unless-stopped
     networks:
       - homelab
-    # Optional: use Docker secrets for the password instead (see NFR-1)
-    # secrets:
-    #   - icloud_password
+
+secrets:
+  # JSON array, same shape as CALDAV_SOURCES in the README.
+  caldav_sources:
+    file: ./secrets/caldav_sources.json
+  # One or more tokens, comma-separated. Generate with: openssl rand -hex 32
+  kairos_api_tokens:
+    file: ./secrets/kairos_api_tokens.txt
 
 networks:
   homelab:
     driver: bridge
-
-# secrets:
-#   icloud_password:
-#     file: ./secrets/icloud_password.txt

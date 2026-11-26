@@ -1,36 +1,23 @@
-FROM python:3.11-alpine
+# syntax=docker/dockerfile:1
 
-# Install runtime dependencies (TLS, libffi for CalDAV)
-RUN apk add --no-cache \
-    ca-certificates \
-    openssl \
-    libffi-dev \
-    gcc \
-    musl-dev
+FROM python:3.12-slim AS build
+WORKDIR /src
+RUN python -m venv /venv
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+RUN /venv/bin/pip install --no-cache-dir .
 
-# Create non-root user
-RUN addgroup -g 1000 appuser && adduser -D -u 1000 -G appuser appuser
-
-WORKDIR /app
-
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies (no cache to reduce image size)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
-COPY src/ .
-
-# Change ownership to appuser
-RUN chown -R appuser:appuser /app
-
-USER appuser
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health', timeout=5)" || exit 1
-
+FROM python:3.12-slim
+RUN useradd --system --uid 1000 --create-home kairos
+COPY --from=build /venv /venv
+ENV PATH="/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    KAIROS_HOST=0.0.0.0 \
+    KAIROS_PORT=8080
+USER kairos
 EXPOSE 8080
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"KAIROS_PORT\", \"8080\")}/health', timeout=4)"
+
+CMD ["kairos", "serve"]

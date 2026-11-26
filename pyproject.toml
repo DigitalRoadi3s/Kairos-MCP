@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kairos-mcp"
+version = "2.0.0"
+description = "CalDAV gateway that exposes iCloud, Nextcloud and Google calendars as a REST API and an MCP server."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "DigitalRoadi3s" }]
+dependencies = [
+    "caldav>=3.7,<4",
+    "icalendar>=7.3,<8",
+    "fastapi>=0.165,<1",
+    "uvicorn[standard]>=0.54,<1",
+    "mcp>=2.3,<3",
+    "pydantic>=2.14,<3",
+    "prometheus-client>=0.26,<1",
+    "pyjwt[crypto]>=2.15,<3",
+    "httpx>=0.28,<1",
+    "pyyaml>=6.0,<7",
+    "anyio>=4.6,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4",
+    "pytest-cov>=6",
+    "ruff>=0.14",
+    "mypy>=1.18",
+    "radicale>=3.5",
+    "recurring-ical-events>=3",
+    "types-PyYAML",
+]
+
+[project.scripts]
+kairos = "kairos.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/DigitalRoadi3s/kairos-mcp"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kairos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = ["integration: talks to a real CalDAV server (Radicale, started by the test fixture)"]
+filterwarnings = ["error::DeprecationWarning:kairos.*"]
+
+[tool.coverage.run]
+source = ["kairos"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S"]
+ignore = ["S101", "RUF012", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S107", "S108", "S603", "S607", "B017"]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["kairos"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true

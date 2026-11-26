@@ -2,9 +2,9 @@
 
 Saved prompt shortcuts for Claude Desktop / claude.ai's chat-level `/commands`
 feature (Settings → slash commands). These are plain saved prompts, not code —
-Claude has access to the `caldav` MCP tools already configured in
-`claude_desktop_config.json`, so each prompt below triggers a real tool call
-when the command runs.
+Claude has access to the Kairos MCP tools (connected as described in the
+[main README](../README.md#connecting-clients)), so each prompt below triggers
+a real tool call when the command runs.
 
 This is different from Claude Code's `.claude/commands/` — those are for the
 Code tab specifically and use markdown files with frontmatter. See
@@ -26,9 +26,9 @@ name and prompt text.
 
 ## Adding your own
 
-Any prompt that references "the caldav MCP" and one of the seven tools
-(`list_calendars`, `list_events`, `daily_brief`, `create_event`, `update_event`,
-`delete_event`, `gateway_health`) will work the same way. See the
+Any prompt that references "the caldav MCP" and one of the eight tools
+(`list_calendars`, `list_events`, `get_event`, `daily_brief`, `create_event`,
+`update_event`, `delete_event`, `gateway_health`) will work the same way. See the
 [tool reference](README.md#tool-reference) for full parameter details —
 useful when writing a command that needs specific arguments, like a
 particular calendar ID or date range.
