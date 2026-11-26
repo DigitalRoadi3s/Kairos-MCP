@@ -352,6 +352,23 @@ Errors return `{"detail": "...", "error": "<code>"}`.
 
 Metrics: `caldav_request_duration_seconds`, `caldav_calendar_sync_errors_total`, `api_request_duration_seconds` (labelled by route), `api_errors_total`.
 
+## Provider plugins
+
+Each calendar source can set `"provider"`. Leave it out and Kairos uses the
+built-in `caldav` provider, which handles iCloud, Nextcloud, Fastmail, Google
+and any other CalDAV server. A separate package can add a provider for a
+service that needs its own code:
+
+```toml
+[project.entry-points."kairos.providers"]
+zoho = "kairos_provider_zoho:provider"
+```
+
+The entry point names a `kairos.providers.Provider` (or a function that returns
+one) whose `name` matches the entry point. Its `build_source` turns a
+`SourceConfig` into an object with the methods of `kairos.service.Source`.
+Set `two_way=False` for a service that can't take writes.
+
 ## Development
 
 ```bash
@@ -364,7 +381,7 @@ pytest -m "not integration"  # unit and contract tests only
 ## Layout
 
 ```
-src/kairos/          core: service, iCalendar handling, auth, settings
+src/kairos/          core: service, providers, iCalendar handling, auth, settings
 src/kairos/api/      REST and MCP adapters
 src/kairos/sources/  CalDAV client and Google OAuth
 tests/               unit and contract tests; tests/integration runs against Radicale
