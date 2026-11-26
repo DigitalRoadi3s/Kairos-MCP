@@ -38,6 +38,7 @@ Start with one of those. Come back here when you're running multiple models and 
 - Circuit breaker with backoff per source; writes are never retried, so a timeout can't create duplicates
 - Bearer-token auth on everything; OAuth for `/mcp` through WorkOS AuthKit or your own identity provider
 - Structured JSON logs, Prometheus metrics (`/metrics`), per-source health (`/health`)
+- Provider plugins for services that need their own code, and a per-caller hook for multi-user hosts ([guides/providers.md](guides/providers.md), [guides/embedding.md](guides/embedding.md))
 
 ## Quick start
 
@@ -86,13 +87,13 @@ export CALDAV_SOURCES='[{"id":"icloud","name":"Personal","url":"https://caldav.i
 | Placeholder | Replace with | Shows up in |
 |---|---|---|
 | `you@icloud.com` | Your real iCloud email | `username` |
-| `xxxx-xxxx-xxxx-xxxx` | An app-specific password (16 chars, NOT your Apple ID password — generate one at icloud.com/account/security) | `password` |
-| `https://p178-caldav.icloud.com/ACCOUNT_ID/calendars/CALENDAR_UUID/` | The full calendar URL from the discovery script below — don't guess it, don't use a relative path | `calendar_path` |
+| `xxxx-xxxx-xxxx-xxxx` | An app-specific password (16 characters, not your Apple ID password; generate one at account.apple.com under Sign-In and Security) | `password` |
+| `https://p178-caldav.icloud.com/ACCOUNT_ID/calendars/CALENDAR_UUID/` | The full calendar URL from the discovery script below. Don't guess it or use a relative path | `calendar_path` |
 | `"id":"icloud"` | Any nickname you want | Whatever you put here must match in every curl example below (`/calendars/icloud/...`) |
 
 #### Finding your calendar URL
 
-iCloud routes each account to a specific shard server (`p178-caldav.icloud.com`, `p30-caldav.icloud.com`, etc.) and identifies calendars by UUID, not display name. The URL you need looks like `https://p178-caldav.icloud.com/58373301/calendars/A7A8B621-7523-48DF-B3A2-0B6C0481FFC5/` — you cannot construct it manually. Run this to find yours:
+iCloud routes each account to a specific shard server (`p178-caldav.icloud.com`, `p30-caldav.icloud.com`, etc.) and identifies calendars by UUID, not display name. The URL you need looks like `https://p178-caldav.icloud.com/123456789/calendars/0A1B2C3D-4E5F-6789-ABCD-EF0123456789/`, and you can't build it by hand. Run this to find yours:
 
 ```bash
 pip install caldav
@@ -108,7 +109,7 @@ for cal in client.principal().calendars():
 EOF
 ```
 
-Copy the **Full URL** of the calendar you want into `calendar_path` — the entire `https://...` string, verbatim. The `url` field in the config stays as `https://caldav.icloud.com/`; only `calendar_path` gets the shard-specific URL.
+Copy the **Full URL** of the calendar you want into `calendar_path`: the entire `https://...` string, verbatim. The `url` field in the config stays as `https://caldav.icloud.com/`; only `calendar_path` gets the shard-specific URL.
 
 ### Nextcloud
 
@@ -122,20 +123,20 @@ export CALDAV_SOURCES='[{"id":"nextcloud","name":"Nextcloud Personal","url":"htt
 |---|---|
 | `your-nextcloud-domain` | Your Nextcloud server's domain |
 | `your-nextcloud-username` | Your Nextcloud login username |
-| `xxxx-xxxx-xxxx-xxxx` | An app password — Nextcloud web UI → your avatar → Settings → Security → "Create new app password" |
-| `.../calendars/your-nextcloud-username/personal/` | The calendar's slug — the Calendar app Settings panel shows each calendar's exact path |
+| `xxxx-xxxx-xxxx-xxxx` | An app password: Nextcloud web UI → your avatar → Settings → Security → "Create new app password" |
+| `.../calendars/your-nextcloud-username/personal/` | The calendar's slug; the Calendar app Settings panel shows each calendar's exact path |
 
-Multiple sources (iCloud and Nextcloud together) go in the same array — each needs a unique `id`.
+Multiple sources (iCloud and Nextcloud together) go in the same array, each with a unique `id`.
 
 ### Google Calendar
 
 > **Before reaching for this path**: if you only need Google Calendar with Claude, Google's [official Calendar MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server) (`calendarmcp.googleapis.com`) is simpler and has more tools (free-time suggestion, event search, RSVP). It's still in Developer Preview, but it handles auth for you.
 >
-> Use the CalDAV path here when you specifically need Google routed through this gateway — so it shares rate-limit budget and circuit-breaker state with your other sources in a multi-agent setup.
+> Use the CalDAV path here when you specifically need Google routed through this gateway, so it shares rate-limit budget and circuit-breaker state with your other sources in a multi-agent setup.
 
 Google disabled username/password CalDAV access in March 2025. The CalDAV path requires a refresh token from a one-time OAuth consent flow:
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), enable the **Google Calendar API** and create an **OAuth 2.0 Client ID** (Desktop app type) — gives you a `client_id` and `client_secret`.
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable the **Google Calendar API** and create an **OAuth 2.0 Client ID** (Desktop app type). That gives you a `client_id` and `client_secret`.
 2. Run this once to get a refresh token:
    ```bash
    pip install google-auth-oauthlib
@@ -369,6 +370,16 @@ one) whose `name` matches the entry point. Its `build_source` turns a
 `SourceConfig` into an object with the methods of `kairos.service.Source`.
 Set `two_way=False` for a service that can't take writes.
 
+The full guide, with a worked example and how to test a plugin, is in [guides/providers.md](guides/providers.md).
+
+## Embedding Kairos
+
+A host that serves many users can give each caller their own calendars. Pass
+`create_app(settings, resolver=...)` an async function that takes the verified
+token and returns that caller's `CalendarService`, and optionally your own
+token verifier. Self-hosted setups don't need this. See
+[guides/embedding.md](guides/embedding.md).
+
 ## Development
 
 ```bash
@@ -378,6 +389,8 @@ pytest                       # includes integration tests against a real Radical
 pytest -m "not integration"  # unit and contract tests only
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to send a change, and [SECURITY.md](SECURITY.md) to report a vulnerability.
+
 ## Layout
 
 ```
@@ -385,6 +398,7 @@ src/kairos/          core: service, providers, iCalendar handling, auth, setting
 src/kairos/api/      REST and MCP adapters
 src/kairos/sources/  CalDAV client and Google OAuth
 tests/               unit and contract tests; tests/integration runs against Radicale
+guides/              provider plugin and embedding guides
 skill/               OpenAI-compatible tool definitions and chat commands
 ```
 

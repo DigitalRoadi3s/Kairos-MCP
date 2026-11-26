@@ -1,12 +1,12 @@
 # Kairos-MCP tools for other agents
 
-OpenAI-compatible tool definitions and chat shortcuts for [Kairos-MCP](https://github.com/DigitalRoadi3s/Kairos-MCP) — a multi-agent CalDAV gateway.
+OpenAI-compatible tool definitions and chat shortcuts for [Kairos-MCP](https://github.com/DigitalRoadi3s/Kairos-MCP), a multi-agent CalDAV gateway.
 
 **Before using this**: if you only need Claude to talk to your calendar, you probably don't need any of this. Check these first:
-- **iCloud + Claude Desktop**: [`mcp-calendars`](https://github.com/lucasheight/mcp-calendars) — one install, no gateway required
-- **Google Calendar + Claude**: [Google's official MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server) at `calendarmcp.googleapis.com` — 9 tools, OAuth handled for you
+- **iCloud + Claude Desktop**: [`mcp-calendars`](https://github.com/lucasheight/mcp-calendars): one install, no gateway required
+- **Google Calendar + Claude**: [Google's official MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server) at `calendarmcp.googleapis.com`, 9 tools, OAuth handled for you
 
-Use this skill when you're running the Kairos-MCP gateway specifically — because you need multiple models (Claude + Hermes + a local LLM via OpenClaw) sharing the same calendar backend.
+Use this skill when you're running the Kairos-MCP gateway specifically, because you need multiple models (Claude + Hermes + a local LLM via OpenClaw) sharing the same calendar backend.
 
 ---
 
