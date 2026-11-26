@@ -31,12 +31,12 @@ A plugin exports a `kairos.providers.Provider`:
 from kairos.providers import Provider
 
 provider = Provider(
-    name="zoho",                      # must match the entry point name
+    name="zoho",  # must match the entry point name
     display_name="Zoho Calendar",
-    build_source=build_source,        # SourceConfig -> Source
-    auth_types=("basic",),            # auth_type values this provider accepts
+    build_source=build_source,  # SourceConfig -> Source
+    auth_types=("basic",),  # auth_type values this provider accepts
     default_url="https://calendar.zoho.com/",
-    two_way=True,                     # False makes its calendars read-only
+    two_way=True,  # False makes its calendars read-only
 )
 ```
 

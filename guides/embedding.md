@@ -10,9 +10,11 @@ either for a self-hosted setup.
 ```python
 from kairos.app import create_app
 
+
 async def resolve(token):
     # token is the verified mcp.server.auth.provider.AccessToken, or None
     return await calendar_service_for(token.subject)
+
 
 app = create_app(settings, resolver=resolve)
 ```
@@ -50,9 +52,10 @@ identity provider. A host with its own rules can pass a verifier:
 ```python
 from kairos.auth import TokenVerifier
 
+
 class MyVerifier(TokenVerifier):
-    async def verify_token(self, token):
-        ...  # return an AccessToken, or None to refuse
+    async def verify_token(self, token): ...  # return an AccessToken, or None to refuse
+
 
 app = create_app(settings, resolver=resolve, verifier=MyVerifier(settings))
 ```
