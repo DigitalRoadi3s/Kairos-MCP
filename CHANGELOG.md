@@ -27,6 +27,12 @@ over streamable HTTP at `/mcp`. 2.0 has breaking changes; read **Changed** and
   their verified token, for every REST request and MCP tool call, and
   `create_app(verifier=...)` takes your own token verifier. Self-hosted setups
   don't change. See [guides/embedding.md](guides/embedding.md).
+- Read every calendar at once. The MCP tools `list_events` and
+  `daily_brief` take `calendar_id` as optional. Leave it out and they read
+  all calendars together, label each event with `calendar_id` and
+  `calendar_name`, and list any calendar they couldn't read under `errors`.
+  The all-calendar brief finds free slots across every calendar, so AI apps
+  no longer call `list_calendars` first to answer "what's on my calendar".
 - `get_event` (MCP) and `GET /api/v1/calendars/{id}/events/{uid}` (REST).
 - `PATCH` as an alias for `PUT` on events.
 - `timezone` on create sets the zone the event is stored in; `timezone` on
