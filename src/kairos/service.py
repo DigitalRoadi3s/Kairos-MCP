@@ -205,6 +205,27 @@ class CalendarService:
         limit: int = 100,
     ) -> tuple[list[Event], int]:
         handle = self._handle(calendar_id)
+        start, end = self._range(start, end)
+        events = await self._call(handle, "list_events", handle.source.list_events, start, end)
+        return events[:limit], len(events)
+
+    async def list_all_events(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> tuple[list[tuple[CalendarInfo, Event]], int, list[dict[str, str]]]:
+        """Events from every calendar, soonest first, each paired with its calendar.
+
+        A calendar that fails is reported in the third item instead of failing the whole
+        read, so one broken calendar doesn't hide the others. If every calendar fails,
+        the first error is raised.
+        """
+        start, end = self._range(start, end)
+        found, errors = await self._read_each(start, end)
+        return found[:limit], len(found), errors
+
+    def _range(self, start: datetime | None, end: datetime | None) -> tuple[datetime, datetime]:
         start = start or self._now()
         end = end or start + timedelta(days=DEFAULT_RANGE_DAYS)
         if start.tzinfo is None:
@@ -215,8 +236,51 @@ class CalendarService:
             raise InvalidRequestError("date_min must be before date_max")
         if end - start > timedelta(days=MAX_RANGE_DAYS):
             raise InvalidRequestError(f"Date range can't exceed {MAX_RANGE_DAYS} days")
-        events = await self._call(handle, "list_events", handle.source.list_events, start, end)
-        return events[:limit], len(events)
+        return start, end
+
+    async def _read_each(
+        self, start: datetime, end: datetime
+    ) -> tuple[list[tuple[CalendarInfo, Event]], list[dict[str, str]]]:
+        handles = list(self._handles.values())
+        outcomes: dict[str, list[Event] | Exception] = {}
+
+        async def read(handle: _Handle) -> None:
+            try:
+                outcomes[handle.info.id] = await self._call(
+                    handle, "list_events", handle.source.list_events, start, end
+                )
+            except KairosError as exc:
+                outcomes[handle.info.id] = exc
+            except Exception as exc:
+                logger.exception("calendar_read_failed", extra={"source_id": handle.info.id})
+                outcomes[handle.info.id] = exc
+
+        async with anyio.create_task_group() as tg:
+            for handle in handles:
+                tg.start_soon(read, handle)
+
+        found: list[tuple[CalendarInfo, Event]] = []
+        errors: list[dict[str, str]] = []
+        failures: list[Exception] = []
+        for handle in handles:
+            outcome = outcomes[handle.info.id]
+            if isinstance(outcome, Exception):
+                failures.append(outcome)
+                message = (
+                    f"{outcome.code}: {outcome}"
+                    if isinstance(outcome, KairosError)
+                    else f"calendar_error: unexpected error ({type(outcome).__name__})"
+                )
+                errors.append({"calendar_id": handle.info.id, "calendar_name": handle.info.name, "error": message})
+            else:
+                found.extend((handle.info, e) for e in outcome)
+        if handles and len(failures) == len(handles):
+            first = failures[0]
+            if isinstance(first, KairosError):
+                raise first
+            raise SourceUnavailableError("None of your calendars could be read") from first
+        found.sort(key=lambda pair: pair[1].start_time)
+        return found, errors
 
     async def get_event(self, calendar_id: str, uid: str) -> Event:
         handle = self._handle(calendar_id)
@@ -252,6 +316,32 @@ class CalendarService:
             day_end=day_end,
         )
         self.brief_cache.set(key, result)
+        return result
+
+    async def daily_brief_all(self, tz_name: str | None = None) -> dict[str, Any]:
+        """Today's brief across every calendar: free slots account for all of them.
+
+        Each event carries the calendar it came from. tz_name defaults to the first
+        calendar's zone. Calendars that fail are listed under "errors".
+        """
+        first = next(iter(self._handles.values()), None)
+        tz = parse_timezone(tz_name or (first.info.timezone if first else "UTC"))
+        day_start, day_end = brief_mod.day_bounds(tz, self._now())
+        found, errors = await self._read_each(day_start.astimezone(UTC), day_end.astimezone(UTC))
+        result = brief_mod.compute_brief(
+            [e for _, e in found],
+            calendar_id="all",
+            calendar_name="All calendars",
+            tz=tz,
+            day_start=day_start,
+            day_end=day_end,
+        )
+        # compute_brief sorts by start time too, and the sort is stable, so the order matches.
+        for event, (info, _) in zip(result["events"], found, strict=True):
+            event["calendar_id"] = info.id
+            event["calendar_name"] = info.name
+        result["calendars"] = [{"id": h.info.id, "name": h.info.name} for h in self._handles.values()]
+        result["errors"] = errors
         return result
 
     # ------------------------------------------------------------------ writes

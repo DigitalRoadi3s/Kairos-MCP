@@ -28,7 +28,10 @@ T = TypeVar("T")
 
 INSTRUCTIONS = (
     "Calendar tools backed by the user's own CalDAV calendars (iCloud, Nextcloud, Google). "
-    "Call list_calendars first to get calendar ids. Times you send must include a UTC offset. "
+    "To answer what's on the user's calendar, call list_events or daily_brief without a calendar_id: "
+    "that reads every calendar at once and labels each event with its calendar. "
+    "Call list_calendars for calendar ids, which writes and get_event need. "
+    "Times you send must include a UTC offset. "
     "Pass the user's IANA timezone to read tools so results come back in local time. "
     "One-off events that start within the lock window or have already started can't be changed. "
     "Confirm with the user before deleting events or inviting attendees: the calendar server may email them."
@@ -120,7 +123,8 @@ def build_mcp(
     async def list_calendars() -> dict[str, Any]:
         """List the configured calendars with their ids, names, time zones and whether they're writable.
 
-        Call this first to get valid calendar_id values.
+        You need a calendar_id to create, change or delete events. To read events you don't:
+        list_events and daily_brief read every calendar when you leave calendar_id out.
         """
         return {
             "calendars": [
@@ -131,7 +135,7 @@ def build_mcp(
 
     @mcp.tool(annotations=READ)
     async def list_events(
-        calendar_id: str,
+        calendar_id: str | None = None,
         date_min: str | None = None,
         date_max: str | None = None,
         limit: int = 100,
@@ -139,16 +143,26 @@ def build_mcp(
     ) -> dict[str, Any]:
         """List events between date_min and date_max (ISO 8601; default now to 30 days out, max 366 days).
 
+        Omit calendar_id to read all calendars at once: each event then carries calendar_id
+        and calendar_name, and any calendar that couldn't be read is listed under errors.
         Recurring events come back as one entry per occurrence. Pass timezone (IANA name,
         e.g. America/New_York) to get times in that zone instead of UTC. Returns event uids,
         which get_event, update_event and delete_event need.
         """
         tz = parse_timezone(timezone) if timezone else None
-        events, matched = await _run(
-            (await svc()).list_events(
-                calendar_id, _dt(date_min, "date_min"), _dt(date_max, "date_max"), max(1, min(limit, 1000))
-            )
-        )
+        start, end, cap = _dt(date_min, "date_min"), _dt(date_max, "date_max"), max(1, min(limit, 1000))
+        if not calendar_id:
+            pairs, total, errors = await _run((await svc()).list_all_events(start, end, cap))
+            return {
+                "calendar_id": None,
+                "matched_count": total,
+                "truncated": total > len(pairs),
+                "events": [
+                    {**event_to_dict(e, tz), "calendar_id": info.id, "calendar_name": info.name} for info, e in pairs
+                ],
+                "errors": errors,
+            }
+        events, matched = await _run((await svc()).list_events(calendar_id, start, end, cap))
         return {
             "calendar_id": calendar_id,
             "matched_count": matched,
@@ -163,12 +177,16 @@ def build_mcp(
         return event_to_dict(await _run((await svc()).get_event(calendar_id, uid)), tz)
 
     @mcp.tool(annotations=READ)
-    async def daily_brief(calendar_id: str, timezone: str | None = None) -> dict[str, Any]:
+    async def daily_brief(calendar_id: str | None = None, timezone: str | None = None) -> dict[str, Any]:
         """Today's events, free slots longer than 15 minutes, busy time and who you're meeting.
 
-        timezone is an IANA name; it defaults to the calendar's configured zone. Use this for
-        morning briefings and "what's on today" or "when am I free today" questions.
+        Omit calendar_id to cover all calendars: free slots then account for every calendar,
+        and each event carries calendar_id and calendar_name. timezone is an IANA name; it
+        defaults to the calendar's configured zone (the first calendar's, across all). Use this
+        for morning briefings and "what's on today" or "when am I free today" questions.
         """
+        if not calendar_id:
+            return await _run((await svc()).daily_brief_all(timezone))
         return await _run((await svc()).daily_brief(calendar_id, timezone))
 
     @mcp.tool(annotations=WRITE)
