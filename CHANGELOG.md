@@ -16,6 +16,13 @@ itself over streamable HTTP at `/mcp`.
   takes an async function that returns the caller's own `CalendarService`
   from their verified token, for every REST request and MCP tool call.
   Self-hosted setups are unchanged.
+- **Read every calendar at once.** The MCP tools `list_events` and
+  `daily_brief` take `calendar_id` as optional. Leave it out and they read
+  all calendars together, label each event with `calendar_id` and
+  `calendar_name`, and list any calendar that couldn't be read under
+  `errors`. The all-calendar brief computes free slots across every
+  calendar. AI apps no longer have to call `list_calendars` first to answer
+  "what's on my calendar".
 
 ### Breaking
 - **Auth is on by default.** Every endpoint except `/health` and `/metrics`
